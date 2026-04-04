@@ -23,8 +23,18 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
+def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if not value or ctx.resilient_parsing:
+        return
+    from shell_cluster import get_version_string
+    click.echo(f"shellcluster {get_version_string()}")
+    ctx.exit()
+
+
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging")
+@click.option("--version", is_flag=True, callback=_version_callback, expose_value=False,
+              is_eager=True, help="Show version and git hash")
 def main(verbose: bool) -> None:
     """Shell Cluster - Remote access to all your shells via tunnels."""
     setup_logging(verbose)

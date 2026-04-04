@@ -19,6 +19,7 @@ from shell_cluster.protocol import (
     make_shell_close,
     make_shell_create,
     make_shell_data,
+    make_shell_resize,
 )
 
 log = logging.getLogger(__name__)
@@ -85,12 +86,26 @@ class ShellClient:
     async def _raw_session_unix(
         self, ws: websockets.asyncio.client.ClientConnection,
     ) -> None:
+        import signal
         import termios
         import tty
 
         old_settings = termios.tcgetattr(sys.stdin.fileno())
         try:
             tty.setraw(sys.stdin.fileno())
+
+            # Handle terminal resize (SIGWINCH)
+            loop = asyncio.get_event_loop()
+
+            def on_resize() -> None:
+                try:
+                    size = os.get_terminal_size()
+                    msg = make_shell_resize(self._session_id, size.columns, size.lines)
+                    asyncio.ensure_future(ws.send(msg.to_json()))
+                except (OSError, websockets.ConnectionClosed):
+                    pass
+
+            loop.add_signal_handler(signal.SIGWINCH, on_resize)
 
             # Use tasks so we can cancel stdin reader when ws reader finishes
             stdin_task = asyncio.create_task(self._read_stdin_unix(ws))
@@ -110,6 +125,7 @@ class ShellClient:
                 except (asyncio.CancelledError, Exception):
                     pass
         finally:
+            loop.remove_signal_handler(signal.SIGWINCH)
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
 
     async def _read_stdin_unix(

@@ -155,6 +155,8 @@ class ShellManager:
         except (OSError, IOError):
             pass
         finally:
+            # Reap child process to avoid zombies
+            self._reap_child(session)
             if on_exit:
                 await on_exit(session.session_id)
 
@@ -212,6 +214,20 @@ class ShellManager:
 
     # ── Close (cross-platform) ──────────────────────────────────────
 
+    def _reap_child(self, session: ShellSession) -> None:
+        """Reap child process to prevent zombies (Unix only)."""
+        if IS_WINDOWS or session.pid <= 0:
+            return
+        try:
+            pid, _ = os.waitpid(session.pid, os.WNOHANG)
+            if pid == 0:
+                # Child hasn't exited yet, try once more after a short wait
+                import time
+                time.sleep(0.1)
+                os.waitpid(session.pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
     async def close(self, session_id: str) -> None:
         """Close a shell session."""
         session = self._sessions.pop(session_id, None)
@@ -229,9 +245,18 @@ class ShellManager:
                 if proc.isalive():
                     proc.terminate(force=True)
             else:
-                os.close(session._handle)
+                try:
+                    os.close(session._handle)
+                except OSError:
+                    pass
                 import signal
-                os.kill(session.pid, signal.SIGTERM)
+                try:
+                    os.kill(session.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                # Wait briefly in executor so child has time to exit
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._reap_child, session)
         except OSError:
             pass
 

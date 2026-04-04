@@ -33,6 +33,8 @@ class ShellServer:
         self._port = port
         self._server: websockets.asyncio.server.Server | None = None
         self._clients: set[ServerConnection] = set()
+        # Track which sessions belong to which client
+        self._client_sessions: dict[ServerConnection, set[str]] = {}
 
     async def start(self) -> None:
         """Start the WebSocket server."""
@@ -53,6 +55,7 @@ class ShellServer:
     async def _handle_client(self, ws: ServerConnection) -> None:
         """Handle a connected WebSocket client."""
         self._clients.add(ws)
+        self._client_sessions[ws] = set()
         log.info("Client connected from %s", ws.remote_address)
 
         # Send peer info on connect
@@ -69,6 +72,11 @@ class ShellServer:
         except websockets.ConnectionClosed:
             pass
         finally:
+            # Clean up sessions owned by this client
+            session_ids = self._client_sessions.pop(ws, set())
+            for sid in session_ids:
+                await self._shell_manager.close(sid)
+                log.info("Cleaned up session %s (client disconnected)", sid)
             self._clients.discard(ws)
             log.info("Client disconnected")
 
@@ -107,6 +115,9 @@ class ShellServer:
                 on_output=on_output,
                 on_exit=on_exit,
             )
+            # Track session ownership
+            if ws in self._client_sessions:
+                self._client_sessions[ws].add(session.session_id)
             resp = make_shell_created(session.session_id, session.shell)
             await ws.send(resp.to_json())
         except Exception as e:
@@ -125,6 +136,9 @@ class ShellServer:
     async def _handle_close(self, ws: ServerConnection, msg: Message) -> None:
         """Close a shell session."""
         await self._shell_manager.close(msg.session_id)
+        # Remove from client tracking
+        if ws in self._client_sessions:
+            self._client_sessions[ws].discard(msg.session_id)
         await ws.send(make_shell_closed(msg.session_id).to_json())
 
     async def _handle_list(self, ws: ServerConnection, msg: Message) -> None:

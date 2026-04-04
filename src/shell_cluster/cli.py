@@ -199,38 +199,45 @@ def connect(target: str, shell_type: str) -> None:
 
 @main.command()
 @click.option("--peers", "-p", multiple=True, help="Peer URIs (e.g. ws://host:port or name=ws://host:port)")
-def dashboard(peers: tuple[str, ...]) -> None:
-    """Open the TUI dashboard.
+@click.option("--port", "dash_port", default=9000, help="Dashboard HTTP port")
+@click.option("--no-open", is_flag=True, help="Don't auto-open browser")
+def dashboard(peers: tuple[str, ...], dash_port: int, no_open: bool) -> None:
+    """Open the web dashboard in your browser.
 
     In local mode, pass peers directly:
 
         shellcluster dashboard -p node-a=ws://localhost:8765 -p node-b=ws://localhost:8766
     """
-    from shell_cluster.models import Peer, PeerStatus
-    from shell_cluster.tui.app import ShellClusterApp
+    from shell_cluster.web.server import DashboardServer
 
     config = load_config()
 
-    # Parse manual peers from CLI
-    manual_peers: list[Peer] = []
+    # Parse peers
+    peer_list: list[dict] = []
     for p in peers:
         if "=" in p:
             name, uri = p.split("=", 1)
         else:
-            # Derive name from host:port
             name = p.replace("ws://", "").replace("wss://", "").replace(":", "-")
             uri = p
         if not uri.startswith("ws://") and not uri.startswith("wss://"):
             uri = f"ws://{uri}"
-        manual_peers.append(Peer(
-            name=name,
-            tunnel_id=f"manual-{name}",
-            forwarding_uri=uri,
-            status=PeerStatus.ONLINE,
-        ))
+        peer_list.append({"name": name, "uri": uri, "status": "online"})
 
-    app = ShellClusterApp(config, manual_peers=manual_peers)
-    app.run()
+    if not peer_list:
+        console.print("[yellow]No peers specified. Use -p to add peers.[/yellow]")
+        console.print("Example: shellcluster dashboard -p mypc=ws://localhost:8765")
+        return
+
+    console.print(f"Starting dashboard on [bold]http://127.0.0.1:{dash_port}[/bold]")
+    for p in peer_list:
+        console.print(f"  Peer: {p['name']} → {p['uri']}")
+
+    server = DashboardServer(peer_list, port=dash_port, no_open=no_open)
+    try:
+        asyncio.run(server.run_forever())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

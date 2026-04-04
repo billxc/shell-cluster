@@ -16,7 +16,7 @@ macOS (zsh)                Windows (PowerShell)         Linux (bash)
        │                         │                         │
   ═════╪═════════ Tunnel (P2P, no server) ═════════════════╪═════
        │                         │                         │
-  CLI / TUI Dashboard (from any machine, any OS)
+  CLI / Web Dashboard (from any machine, any OS)
 ```
 
 **No central server.** Every node is equal. Nodes discover each other by querying the tunnel provider's API for tunnels tagged with a shared label -- all under the same account. No relay, no coordinator, no single point of failure.
@@ -68,11 +68,13 @@ shellcluster connect ws://localhost:8765
 
 You're now in the remote shell. Type `exit` or press `~.` (tilde-dot after newline) to disconnect.
 
-### 3. TUI Dashboard
+### 3. Web Dashboard
 
 ```bash
-shellcluster dashboard
+shellcluster dashboard -p macbook=ws://localhost:8765 -p windows-pc=ws://localhost:8766
 ```
+
+Opens your browser with a terminal dashboard -- left sidebar shows all peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
 
 ## Tunnel Mode (Across Networks)
 
@@ -131,7 +133,7 @@ shellcluster connect my-desktop powershell    # specify shell type
 | `shellcluster peers` | List discovered peers |
 | `shellcluster connect <target>` | Connect by name or `ws://host:port` |
 | `shellcluster connect <target> <shell>` | Connect with specific shell type |
-| `shellcluster dashboard` | Open TUI dashboard |
+| `shellcluster dashboard -p name=ws://host:port` | Open web dashboard in browser |
 | `-v` / `--verbose` | Enable debug logging |
 
 ## Configuration
@@ -183,7 +185,7 @@ uv run shellcluster connect ws://localhost:8765
 - [x] MS Dev Tunnel backend
 - [ ] Cloudflare Tunnel backend
 - [ ] E2E encryption
-- [ ] Web UI (HTML)
+- [x] Web Dashboard (xterm.js)
 - [ ] File transfer
 - [ ] [easy-service](https://github.com/billxc/easy-service) integration for system service registration
 

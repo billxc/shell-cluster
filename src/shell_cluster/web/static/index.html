@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shell Cluster</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --sidebar-width: 240px;
+  --bg: #1e1e2e;
+  --bg-surface: #181825;
+  --bg-hover: #313244;
+  --bg-active: #45475a;
+  --text: #cdd6f4;
+  --text-dim: #6c7086;
+  --green: #a6e3a1;
+  --red: #f38ba8;
+  --blue: #89b4fa;
+  --accent: #cba6f7;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Sidebar */
+#sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--bg-hover);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--bg-hover);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#sidebar-header span { font-size: 16px; }
+
+#peer-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.peer-group {
+  margin-bottom: 4px;
+}
+
+.peer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.peer-header:hover { background: var(--bg-hover); }
+
+.peer-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.peer-status.online { background: var(--green); }
+.peer-status.offline { background: var(--red); }
+.peer-status.connecting { background: #f9e2af; }
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.session-item:hover { background: var(--bg-hover); color: var(--text); }
+.session-item.active { background: var(--bg-active); color: var(--text); }
+
+.session-icon { font-size: 14px; }
+
+#sidebar-footer {
+  padding: 12px;
+  border-top: 1px solid var(--bg-hover);
+  display: flex;
+  gap: 8px;
+}
+
+#sidebar-footer button {
+  flex: 1;
+  padding: 6px 12px;
+  background: var(--bg-hover);
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#sidebar-footer button:hover { background: var(--bg-active); }
+
+/* Main area */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+}
+
+/* Tab bar */
+#tab-bar {
+  display: flex;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--bg-hover);
+  overflow-x: auto;
+  min-height: 36px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tab:hover { color: var(--text); background: var(--bg-hover); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.tab-close {
+  font-size: 14px;
+  opacity: 0.5;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.tab-close:hover { opacity: 1; color: var(--red); }
+
+/* Terminal area */
+#terminal-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-pane {
+  position: absolute;
+  inset: 0;
+  display: none;
+  padding: 4px;
+}
+
+.terminal-pane.active { display: block; }
+
+/* Welcome */
+#welcome {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: center;
+  line-height: 2;
+}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="sidebar-header">
+    <span>&#x2726;</span> Shell Cluster
+  </div>
+  <div id="peer-list"></div>
+  <div id="sidebar-footer">
+    <button onclick="refreshPeers()">&#x21bb; Refresh</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="tab-bar"></div>
+  <div id="terminal-container">
+    <div id="welcome">
+      <div>
+        Select a peer and click <b>+ New Shell</b><br>
+        or click a peer name to connect
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+// Peers injected by server
+const PEERS = __PEERS_CONFIG__;
+
+// State
+const sessions = new Map(); // tabId -> { ws, term, peerName, sessionId, pane }
+let activeTab = null;
+let tabCounter = 0;
+
+// --- Peer list ---
+function renderPeers() {
+  const list = document.getElementById('peer-list');
+  list.innerHTML = '';
+
+  for (const peer of PEERS) {
+    const group = document.createElement('div');
+    group.className = 'peer-group';
+
+    const header = document.createElement('div');
+    header.className = 'peer-header';
+    header.innerHTML = `
+      <span class="peer-status ${peer.status || 'online'}"></span>
+      <span style="flex:1">${esc(peer.name)}</span>
+      <span style="font-size:16px;opacity:0.5" title="New shell">+</span>
+    `;
+    header.onclick = () => createSession(peer);
+    group.appendChild(header);
+
+    // Show existing sessions for this peer
+    for (const [tabId, s] of sessions) {
+      if (s.peerName === peer.name) {
+        const item = document.createElement('div');
+        item.className = 'session-item' + (tabId === activeTab ? ' active' : '');
+        item.innerHTML = `<span class="session-icon">&#x25B8;</span> ${esc(s.shell || 'shell')} #${s.sessionId.slice(0,6)}`;
+        item.onclick = (e) => { e.stopPropagation(); switchTab(tabId); };
+        group.appendChild(item);
+      }
+    }
+
+    list.appendChild(group);
+  }
+}
+
+// --- Tabs ---
+function renderTabs() {
+  const bar = document.getElementById('tab-bar');
+  bar.innerHTML = '';
+
+  for (const [tabId, s] of sessions) {
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (tabId === activeTab ? ' active' : '');
+    tab.innerHTML = `
+      ${esc(s.peerName)}:${esc(s.shell || '?')}
+      <span class="tab-close" onclick="event.stopPropagation(); closeSession('${tabId}')">&#x2715;</span>
+    `;
+    tab.onclick = () => switchTab(tabId);
+    bar.appendChild(tab);
+  }
+}
+
+function switchTab(tabId) {
+  activeTab = tabId;
+
+  // Hide all panes
+  document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('active'));
+  const welcome = document.getElementById('welcome');
+
+  const s = sessions.get(tabId);
+  if (s && s.pane) {
+    s.pane.classList.add('active');
+    welcome.style.display = 'none';
+    // Fit terminal to new size
+    setTimeout(() => {
+      s.fitAddon.fit();
+      s.term.focus();
+    }, 10);
+  }
+
+  renderTabs();
+  renderPeers();
+}
+
+// --- Session management ---
+function createSession(peer) {
+  const tabId = `tab-${++tabCounter}`;
+
+  // Create terminal pane
+  const pane = document.createElement('div');
+  pane.className = 'terminal-pane';
+  pane.id = tabId;
+  document.getElementById('terminal-container').appendChild(pane);
+
+  // Create xterm
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+    theme: {
+      background: '#1e1e2e',
+      foreground: '#cdd6f4',
+      cursor: '#f5e0dc',
+      selectionBackground: '#45475a',
+      black: '#45475a',
+      red: '#f38ba8',
+      green: '#a6e3a1',
+      yellow: '#f9e2af',
+      blue: '#89b4fa',
+      magenta: '#cba6f7',
+      cyan: '#94e2d5',
+      white: '#bac2de',
+    },
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(pane);
+  fitAddon.fit();
+
+  // Connect via proxy WebSocket
+  const wsUrl = `ws://${location.host}`;
+  const ws = new WebSocket(wsUrl);
+  const sessionId = genId();
+
+  const sessionState = {
+    ws, term, peerName: peer.name, sessionId, pane, fitAddon,
+    shell: '', targetUri: peer.uri,
+  };
+  sessions.set(tabId, sessionState);
+
+  term.writeln(`\x1b[2mConnecting to ${peer.name}...\x1b[0m`);
+
+  ws.onopen = () => {
+    // Send init message to proxy
+    ws.send(JSON.stringify({ target: peer.uri }));
+  };
+
+  let initialized = false;
+  let gotCreated = false;
+
+  ws.onmessage = (event) => {
+    const data = event.data;
+
+    // Try to parse as JSON protocol message
+    try {
+      const msg = JSON.parse(data);
+
+      if (msg.type === 'peer.info') {
+        // Send shell.create
+        const cols = term.cols;
+        const rows = term.rows;
+        ws.send(JSON.stringify({
+          type: 'shell.create',
+          session_id: sessionId,
+          shell: '',
+          cols, rows,
+        }));
+        initialized = true;
+        return;
+      }
+
+      if (msg.type === 'shell.created') {
+        sessionState.shell = msg.shell || '?';
+        gotCreated = true;
+        renderTabs();
+        renderPeers();
+        term.writeln(`\x1b[2mShell: ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
+        return;
+      }
+
+      if (msg.type === 'shell.data' && msg.data) {
+        const bytes = atob(msg.data);
+        term.write(bytes);
+        return;
+      }
+
+      if (msg.type === 'shell.closed') {
+        term.writeln('\r\n\x1b[2m[Session closed]\x1b[0m');
+        return;
+      }
+
+      if (msg.type === 'error') {
+        term.writeln(`\r\n\x1b[31mError: ${msg.error}\x1b[0m`);
+        return;
+      }
+
+    } catch (e) {
+      // Not JSON, raw data - shouldn't happen with our protocol
+      term.write(data);
+    }
+  };
+
+  ws.onclose = () => {
+    term.writeln('\r\n\x1b[2m[Disconnected]\x1b[0m');
+  };
+
+  ws.onerror = () => {
+    term.writeln('\r\n\x1b[31m[Connection error]\x1b[0m');
+  };
+
+  // Terminal input -> WebSocket
+  term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN && gotCreated) {
+      // Encode as base64
+      const b64 = btoa(data);
+      ws.send(JSON.stringify({
+        type: 'shell.data',
+        session_id: sessionId,
+        data: b64,
+      }));
+    }
+  });
+
+  // Handle resize
+  term.onResize(({ cols, rows }) => {
+    if (ws.readyState === WebSocket.OPEN && gotCreated) {
+      ws.send(JSON.stringify({
+        type: 'shell.resize',
+        session_id: sessionId,
+        cols, rows,
+      }));
+    }
+  });
+
+  // Window resize -> fit terminal
+  const resizeObserver = new ResizeObserver(() => {
+    if (activeTab === tabId) {
+      fitAddon.fit();
+    }
+  });
+  resizeObserver.observe(pane);
+  sessionState._resizeObserver = resizeObserver;
+
+  switchTab(tabId);
+}
+
+function closeSession(tabId) {
+  const s = sessions.get(tabId);
+  if (!s) return;
+
+  // Send close to server
+  if (s.ws.readyState === WebSocket.OPEN) {
+    try {
+      s.ws.send(JSON.stringify({
+        type: 'shell.close',
+        session_id: s.sessionId,
+      }));
+    } catch (e) {}
+    s.ws.close();
+  }
+
+  // Cleanup
+  s.term.dispose();
+  s._resizeObserver?.disconnect();
+  s.pane.remove();
+  sessions.delete(tabId);
+
+  // Switch to another tab or show welcome
+  if (activeTab === tabId) {
+    const remaining = [...sessions.keys()];
+    if (remaining.length > 0) {
+      switchTab(remaining[remaining.length - 1]);
+    } else {
+      activeTab = null;
+      document.getElementById('welcome').style.display = 'flex';
+      renderTabs();
+    }
+  }
+
+  renderPeers();
+  renderTabs();
+}
+
+function refreshPeers() {
+  // For now just re-render. In tunnel mode, would re-query discovery.
+  renderPeers();
+}
+
+// --- Helpers ---
+function genId() {
+  return Math.random().toString(16).slice(2, 14);
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// --- Init ---
+renderPeers();
+renderTabs();
+
+// Global resize
+window.addEventListener('resize', () => {
+  if (activeTab) {
+    const s = sessions.get(activeTab);
+    if (s) s.fitAddon.fit();
+  }
+});
+</script>
+</body>
+</html>

@@ -16,7 +16,7 @@ macOS (zsh)                Windows (PowerShell)         Linux (bash)
        │                         │                         │
   ═════╪═════════ Tunnel (P2P, 无服务器) ══════════════════╪═════
        │                         │                         │
-  CLI / TUI Dashboard (从任意机器、任意系统)
+  CLI / Web Dashboard (从任意机器、任意系统)
 ```
 
 **没有中心服务器。** 每个节点地位平等。节点通过查询 tunnel 提供商的 API，筛选同账号下带有相同标签的 tunnel 来自动发现彼此。没有中继、没有协调器、没有单点故障。
@@ -68,11 +68,13 @@ shellcluster connect ws://localhost:8765
 
 你现在进入了远程 shell。输入 `exit` 或按 `~.`（新行后按波浪号再按点）断开。
 
-### 3. TUI Dashboard
+### 3. Web Dashboard
 
 ```bash
-shellcluster dashboard
+shellcluster dashboard -p macbook=ws://localhost:8765 -p windows-pc=ws://localhost:8766
 ```
+
+自动打开浏览器 —— 左侧显示所有节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。
 
 ## Tunnel 模式（跨网络）
 
@@ -131,7 +133,7 @@ shellcluster connect my-desktop powershell    # 指定 shell 类型
 | `shellcluster peers` | 列出已发现的节点 |
 | `shellcluster connect <target>` | 连接到节点（名称或 `ws://host:port`） |
 | `shellcluster connect <target> <shell>` | 连接并指定 shell 类型 |
-| `shellcluster dashboard` | 打开 TUI 管理面板 |
+| `shellcluster dashboard -p name=ws://host:port` | 打开 Web 管理面板（浏览器） |
 | `-v` / `--verbose` | 开启调试日志 |
 
 ## 配置文件
@@ -183,7 +185,7 @@ uv run shellcluster connect ws://localhost:8765
 - [x] MS Dev Tunnel 后端
 - [ ] Cloudflare Tunnel 后端
 - [ ] E2E 加密
-- [ ] Web UI（HTML）
+- [x] Web Dashboard（xterm.js）
 - [ ] 文件传输
 - [ ] 与 [easy-service](https://github.com/billxc/easy-service) 集成，注册为系统服务
 

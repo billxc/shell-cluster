@@ -1,26 +1,26 @@
 # Shell Cluster
 
-跨机器远程访问你所有的 Shell，基于 tunnel 技术，无需中心服务器。
+去中心化的跨机器远程 Shell 访问工具。不需要中心服务器。
 
-## 原理
+每台机器运行一个轻量 daemon，节点通过共享的 tunnel 凭证自动发现彼此。从任何地方连接到任何机器的 shell -- 像 SSH，但不需要管理密钥或服务器。
+
+## 工作原理
 
 ```
-Machine A (daemon)                    Machine B (daemon)
-┌─────────────────────┐              ┌─────────────────────┐
-│  ShellManager       │              │  ShellManager       │
-│  ├─ zsh #1          │              │  ├─ bash #1         │
-│  ├─ bash #2         │              │  └─ zsh #2          │
-│  WebSocket Server   │              │  WebSocket Server   │
-└────────┬────────────┘              └────────┬────────────┘
-         │ :8765                              │ :8765
-    (tunnel / 直连)                      (tunnel / 直连)
-         │                                    │
-    ═════╪════════════════════════════════════╪═════
-         │                                    │
-    Dashboard TUI / CLI (任意机器)
+Machine A                              Machine B
+┌───────────────────┐                 ┌───────────────────┐
+│ daemon            │                 │ daemon            │
+│  ├ zsh #1         │                 │  ├ bash #1        │
+│  └ bash #2        │                 │  └ zsh #2         │
+│ WebSocket :8765   │                 │ WebSocket :8765   │
+└────────┬──────────┘                 └────────┬──────────┘
+         │                                     │
+    ═════╪══ Tunnel (P2P, 无服务器) ═══════════╪═════
+         │                                     │
+    CLI / TUI Dashboard (从任意机器)
 ```
 
-每台机器运行一个 daemon，暴露一个 WebSocket 端口。多个 shell 会话在同一连接上多路复用。节点之间通过 tunnel（MS Dev Tunnel）或局域网直连互相访问。
+**没有中心服务器。** 每个节点地位平等。节点通过查询 tunnel 提供商的 API，筛选同账号下带有相同标签的 tunnel 来自动发现彼此。没有中继、没有协调器、没有单点故障。
 
 ## 安装
 
@@ -36,35 +36,28 @@ uv tool install .
 uv tool install git+https://github.com/billxc/shell-cluster
 ```
 
-安装后 `shellcluster` 命令即可用。
-
 ## 快速开始（本地模式）
 
-不需要 tunnel，适合本机测试或局域网使用。
+不需要 tunnel，适合局域网或本机测试。
 
 ### 1. 启动 daemon
 
 ```bash
-# 终端 1：启动节点 A
+# 终端 1
 shellcluster start --no-tunnel --name node-a --port 8765
 
-# 终端 2：启动节点 B
+# 终端 2
 shellcluster start --no-tunnel --name node-b --port 8766
 ```
 
-### 2. 连接到远程 shell
+### 2. 连接
 
 ```bash
-# 终端 3：直连 node-a
+# 终端 3
 shellcluster connect ws://localhost:8765
-
-# 或者连 node-b
-shellcluster connect localhost:8766
 ```
 
-连接后你会进入对端机器的 shell，就像 SSH 一样。
-
-**断开连接：** 在新行按 `~.`（先按回车，再按波浪号，再按点）。
+你现在进入了 node-a 的 shell。输入 `exit` 或按 `~.`（新行后按波浪号再按点）断开。
 
 ### 3. TUI Dashboard
 
@@ -72,71 +65,50 @@ shellcluster connect localhost:8766
 shellcluster dashboard
 ```
 
-可视化管理所有节点和 shell 会话。
+## Tunnel 模式（跨网络）
 
-## 通过 Tunnel 使用（跨网络）
-
-适合跨网络、跨地域的机器互连。目前支持 MS Dev Tunnel。
+适合不同网络的机器互连。目前支持 MS Dev Tunnel。
 
 ### 前置条件
 
-每台机器安装 [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started) 并登录**同一个微软账号**：
+安装 [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started)，并在每台机器上用 **同一个微软账号** 登录：
 
 ```bash
 devtunnel user login
 ```
 
-### 1. 注册节点
-
-在每台机器上执行：
+### 使用
 
 ```bash
+# 在每台机器上：注册并启动
 shellcluster register --name my-macbook
-# 或自定义端口
-shellcluster register --name my-macbook --port 9000
-```
-
-配置保存在 `~/.config/shell-cluster/config.toml`。
-
-### 2. 启动 daemon
-
-```bash
 shellcluster start
 ```
 
 这会自动：
 - 创建一个带 `shellcluster` 标签的 Dev Tunnel
-- 在本地端口启动 WebSocket Shell 服务
-- 通过 tunnel 暴露该端口
-- 开始定期发现同账号下的其他节点
-
-### 3. 查看节点
+- 启动本地 WebSocket Shell 服务
+- 通过 tunnel 暴露端口
+- 发现同账号下的其他节点
 
 ```bash
+# 查看节点
 shellcluster peers
+
+# 通过名称连接
+shellcluster connect my-desktop
+shellcluster connect my-desktop bash    # 指定 shell 类型
 ```
 
-输出示例：
-```
-┌──────────────────────────────────────────────────────────┐
-│ Peers                                                    │
-├──────────┬─────────────────────────────┬────────┬───────┤
-│ Name     │ Tunnel ID                   │ Status │ URI   │
-├──────────┼─────────────────────────────┼────────┼───────┤
-│ desktop  │ shellcluster-desktop.usw2   │ online │ ...   │
-│ server   │ shellcluster-server.jpe1    │ online │ ...   │
-└──────────┴─────────────────────────────┴────────┴───────┘
-```
+## 为什么去中心化？
 
-### 4. 连接
-
-```bash
-# 通过节点名连接
-shellcluster connect desktop
-
-# 指定 shell 类型
-shellcluster connect desktop bash
-```
+| | Shell Cluster | 传统方案（SSH + 跳板机） |
+|---|---|---|
+| 中心服务器 | 不需要 | 需要跳板机 |
+| 密钥管理 | 不需要（tunnel 认证） | 每台机器都要配 SSH 密钥 |
+| NAT 穿透 | tunnel 内置 | 需要端口转发 / VPN |
+| 节点发现 | 自动 | 手动维护清单 |
+| 单点故障 | 没有 | 跳板机挂了 = 全部断连 |
 
 ## 命令参考
 
@@ -174,28 +146,6 @@ manual_peers = []          # 手动添加的节点 tunnel ID
 command = ""               # 默认 shell，留空则使用 $SHELL
 ```
 
-## 项目结构
-
-```
-src/shell_cluster/
-  cli.py              # CLI 入口
-  config.py            # 配置管理
-  models.py            # 数据模型
-  protocol.py          # WebSocket 通信协议
-  daemon.py            # Daemon 编排器
-  server.py            # WebSocket Shell 服务端
-  client.py            # WebSocket 客户端
-  shell_manager.py     # 本机 PTY 多会话管理
-  discovery.py         # 节点发现
-  tunnel/
-    base.py            # Tunnel 抽象接口
-    devtunnel.py       # MS Dev Tunnel 实现
-  tui/
-    app.py             # Textual TUI 应用
-    widgets/
-      session_list.py  # 会话列表组件
-```
-
 ## 开发
 
 ```bash
@@ -216,7 +166,7 @@ uv run shellcluster connect ws://localhost:8765
 - [ ] Cloudflare Tunnel 后端
 - [ ] E2E 加密
 - [ ] Windows 支持（conpty）
-- [ ] HTML Web UI
+- [ ] Web UI（HTML）
 - [ ] 文件传输
 - [ ] 与 [easy-service](https://github.com/billxc/easy-service) 集成，注册为系统服务
 

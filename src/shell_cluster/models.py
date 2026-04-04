@@ -30,10 +30,11 @@ class ShellSession:
     """A single PTY shell session on a machine."""
 
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    shell: str = ""  # e.g. "zsh", "bash"
+    shell: str = ""  # e.g. "zsh", "bash", "powershell"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     pid: int = 0
-    master_fd: int = -1
+    # Platform-specific handle: fd on Unix, winpty object on Windows
+    _handle: object = field(default=None, repr=False)
 
 
 @dataclass

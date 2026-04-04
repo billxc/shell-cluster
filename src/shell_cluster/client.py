@@ -1,14 +1,14 @@
-"""WebSocket client for connecting to remote shell sessions."""
+"""WebSocket client for connecting to remote shell sessions.
+
+Cross-platform: uses termios/tty on Unix, msvcrt/ctypes on Windows.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import os
 import sys
-import termios
-import tty
 
 import websockets
 
@@ -19,10 +19,11 @@ from shell_cluster.protocol import (
     make_shell_close,
     make_shell_create,
     make_shell_data,
-    make_shell_resize,
 )
 
 log = logging.getLogger(__name__)
+
+IS_WINDOWS = sys.platform == "win32"
 
 
 class ShellClient:
@@ -51,7 +52,11 @@ class ShellClient:
                 log.info("Connected to peer: %s", peer_info.name)
 
             # Get terminal size
-            rows, cols = os.get_terminal_size()
+            try:
+                size = os.get_terminal_size()
+                cols, rows = size.columns, size.lines
+            except OSError:
+                cols, rows = 80, 24
 
             # Create a shell session
             create_msg = make_shell_create(shell=shell, cols=cols, rows=rows)
@@ -68,39 +73,50 @@ class ShellClient:
                 log.info("Shell session created: %s (%s)", created.session_id, created.shell)
 
             # Enter raw terminal mode
-            await self._raw_session(ws)
+            if IS_WINDOWS:
+                await self._raw_session_windows(ws)
+            else:
+                await self._raw_session_unix(ws)
 
-    async def _raw_session(self, ws: websockets.asyncio.client.ClientConnection) -> None:
-        """Run raw terminal session bridging local stdin/stdout to WebSocket."""
+    # ── Unix raw terminal ────────────────────────────────────────────
+
+    async def _raw_session_unix(
+        self, ws: websockets.asyncio.client.ClientConnection,
+    ) -> None:
+        import termios
+        import tty
+
         old_settings = termios.tcgetattr(sys.stdin.fileno())
         try:
             tty.setraw(sys.stdin.fileno())
             await asyncio.gather(
-                self._read_stdin(ws),
+                self._read_stdin_unix(ws),
                 self._read_ws(ws),
                 return_exceptions=True,
             )
         finally:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
 
-    async def _read_stdin(self, ws: websockets.asyncio.client.ClientConnection) -> None:
-        """Read from stdin and send to WebSocket."""
+    async def _read_stdin_unix(
+        self, ws: websockets.asyncio.client.ClientConnection,
+    ) -> None:
         loop = asyncio.get_event_loop()
-        escape_state = 0  # 0=normal, 1=after_newline, 2=after_tilde
+        escape_state = 0
 
         while True:
-            data = await loop.run_in_executor(None, self._blocking_stdin_read)
+            data = await loop.run_in_executor(
+                None, lambda: self._blocking_read_unix()
+            )
             if not data:
                 break
 
-            # Detect ~. escape sequence (disconnect)
+            # Detect ~. escape sequence
             for byte in data:
                 if escape_state == 0 and byte in (ord("\r"), ord("\n")):
                     escape_state = 1
                 elif escape_state == 1 and byte == ord("~"):
                     escape_state = 2
                 elif escape_state == 2 and byte == ord("."):
-                    # Disconnect
                     close_msg = make_shell_close(self._session_id)
                     await ws.send(close_msg.to_json())
                     return
@@ -109,6 +125,107 @@ class ShellClient:
 
             msg = make_shell_data(self._session_id, data)
             await ws.send(msg.to_json())
+
+    @staticmethod
+    def _blocking_read_unix() -> bytes:
+        try:
+            return os.read(sys.stdin.fileno(), 4096)
+        except OSError:
+            return b""
+
+    # ── Windows raw terminal ─────────────────────────────────────────
+
+    async def _raw_session_windows(
+        self, ws: websockets.asyncio.client.ClientConnection,
+    ) -> None:
+        # Enable virtual terminal input on Windows console
+        old_mode = self._enable_win_vt_input()
+        try:
+            await asyncio.gather(
+                self._read_stdin_windows(ws),
+                self._read_ws(ws),
+                return_exceptions=True,
+            )
+        finally:
+            self._restore_win_console_mode(old_mode)
+
+    @staticmethod
+    def _enable_win_vt_input() -> int | None:
+        """Enable raw virtual terminal input on Windows. Returns old mode."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            STD_INPUT_HANDLE = -10
+            ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
+
+            handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+            old_mode = wintypes.DWORD()
+            kernel32.GetConsoleMode(handle, ctypes.byref(old_mode))
+
+            # Raw mode: disable line input and echo, enable VT input
+            new_mode = ENABLE_VIRTUAL_TERMINAL_INPUT
+            kernel32.SetConsoleMode(handle, new_mode)
+            return old_mode.value
+        except Exception:
+            return None
+
+    @staticmethod
+    def _restore_win_console_mode(old_mode: int | None) -> None:
+        if old_mode is None:
+            return
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-10)
+            kernel32.SetConsoleMode(handle, old_mode)
+        except Exception:
+            pass
+
+    async def _read_stdin_windows(
+        self, ws: websockets.asyncio.client.ClientConnection,
+    ) -> None:
+        import msvcrt
+
+        loop = asyncio.get_event_loop()
+        escape_state = 0
+
+        def _read_win() -> bytes:
+            """Read available bytes from Windows console."""
+            buf = b""
+            while msvcrt.kbhit():
+                ch = msvcrt.getch()
+                buf += ch
+            if not buf:
+                # No key available, small sleep to avoid busy loop
+                import time
+                time.sleep(0.01)
+            return buf
+
+        while True:
+            data = await loop.run_in_executor(None, _read_win)
+            if not data:
+                continue
+
+            # Detect ~. escape
+            for byte in data:
+                if escape_state == 0 and byte in (ord("\r"), ord("\n")):
+                    escape_state = 1
+                elif escape_state == 1 and byte == ord("~"):
+                    escape_state = 2
+                elif escape_state == 2 and byte == ord("."):
+                    close_msg = make_shell_close(self._session_id)
+                    await ws.send(close_msg.to_json())
+                    return
+                else:
+                    escape_state = 0
+
+            msg = make_shell_data(self._session_id, data)
+            await ws.send(msg.to_json())
+
+    # ── WebSocket reader (shared) ────────────────────────────────────
 
     async def _read_ws(self, ws: websockets.asyncio.client.ClientConnection) -> None:
         """Read from WebSocket and write to stdout."""
@@ -126,11 +243,3 @@ class ShellClient:
                     break
         except websockets.ConnectionClosed:
             pass
-
-    @staticmethod
-    def _blocking_stdin_read() -> bytes:
-        """Blocking read from stdin."""
-        try:
-            return os.read(sys.stdin.fileno(), 4096)
-        except OSError:
-            return b""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
 
 from shell_cluster.config import Config
 from shell_cluster.discovery import PeerDiscovery
@@ -49,9 +50,10 @@ class Daemon:
         log.info("Starting daemon for node '%s'", self._config.node.name)
 
         # Register signal handlers
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.stop()))
+        if sys.platform != "win32":
+            loop = asyncio.get_event_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.stop()))
 
         if not self._no_tunnel:
             backend = self._get_tunnel_backend()

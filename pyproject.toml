@@ -12,6 +12,7 @@ dependencies = [
     "tomli-w>=1.0",
     "textual>=0.80",
     "rich>=13.0",
+    "pywinpty>=2.0; sys_platform == 'win32'",
 ]
 
 [project.scripts]

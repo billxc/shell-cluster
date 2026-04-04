@@ -2,25 +2,32 @@
 
 去中心化的跨机器远程 Shell 访问工具。不需要中心服务器。
 
-每台机器运行一个轻量 daemon，节点通过共享的 tunnel 凭证自动发现彼此。从任何地方连接到任何机器的 shell -- 像 SSH，但不需要管理密钥或服务器。
+**跨平台**（macOS / Windows / Linux）—— 每台机器运行一个轻量 daemon，节点通过共享的 tunnel 凭证自动发现彼此。从任何地方连接到任何机器的 shell，像 SSH 但不需要管理密钥或服务器。
+
+[English](README.md)
 
 ## 工作原理
 
 ```
-Machine A                              Machine B
-┌───────────────────┐                 ┌───────────────────┐
-│ daemon            │                 │ daemon            │
-│  ├ zsh #1         │                 │  ├ bash #1        │
-│  └ bash #2        │                 │  └ zsh #2         │
-│ WebSocket :8765   │                 │ WebSocket :8765   │
-└────────┬──────────┘                 └────────┬──────────┘
-         │                                     │
-    ═════╪══ Tunnel (P2P, 无服务器) ═══════════╪═════
-         │                                     │
-    CLI / TUI Dashboard (从任意机器)
+macOS (zsh)                Windows (PowerShell)         Linux (bash)
+┌──────────────┐          ┌──────────────┐          ┌──────────────┐
+│ daemon :8765 │          │ daemon :8765 │          │ daemon :8765 │
+└──────┬───────┘          └──────┬───────┘          └──────┬───────┘
+       │                         │                         │
+  ═════╪═════════ Tunnel (P2P, 无服务器) ══════════════════╪═════
+       │                         │                         │
+  CLI / TUI Dashboard (从任意机器、任意系统)
 ```
 
 **没有中心服务器。** 每个节点地位平等。节点通过查询 tunnel 提供商的 API，筛选同账号下带有相同标签的 tunnel 来自动发现彼此。没有中继、没有协调器、没有单点故障。
+
+## 平台支持
+
+| 平台 | 服务端 (daemon) | 客户端 (connect) | Shell |
+|------|:-:|:-:|---|
+| macOS | Yes | Yes | zsh, bash, fish, ... |
+| Windows | Yes | Yes | pwsh (PS 7+), PowerShell, cmd, Git Bash, ... |
+| Linux | Yes | Yes | bash, zsh, fish, ... |
 
 ## 安装
 
@@ -36,6 +43,8 @@ uv tool install .
 uv tool install git+https://github.com/billxc/shell-cluster
 ```
 
+macOS、Windows、Linux 使用相同的安装命令。
+
 ## 快速开始（本地模式）
 
 不需要 tunnel，适合局域网或本机测试。
@@ -43,21 +52,21 @@ uv tool install git+https://github.com/billxc/shell-cluster
 ### 1. 启动 daemon
 
 ```bash
-# 终端 1
-shellcluster start --no-tunnel --name node-a --port 8765
+# 终端 1（比如你的 Mac）
+shellcluster start --no-tunnel --name macbook --port 8765
 
-# 终端 2
-shellcluster start --no-tunnel --name node-b --port 8766
+# 终端 2（比如你的 Windows PC）
+shellcluster start --no-tunnel --name windows-pc --port 8766
 ```
 
 ### 2. 连接
 
 ```bash
-# 终端 3
+# 从任意机器
 shellcluster connect ws://localhost:8765
 ```
 
-你现在进入了 node-a 的 shell。输入 `exit` 或按 `~.`（新行后按波浪号再按点）断开。
+你现在进入了远程 shell。输入 `exit` 或按 `~.`（新行后按波浪号再按点）断开。
 
 ### 3. TUI Dashboard
 
@@ -71,7 +80,7 @@ shellcluster dashboard
 
 ### 前置条件
 
-安装 [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started)，并在每台机器上用 **同一个微软账号** 登录：
+在每台机器上安装 [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started)（支持 macOS、Windows、Linux），用 **同一个微软账号** 登录：
 
 ```bash
 devtunnel user login
@@ -97,7 +106,7 @@ shellcluster peers
 
 # 通过名称连接
 shellcluster connect my-desktop
-shellcluster connect my-desktop bash    # 指定 shell 类型
+shellcluster connect my-desktop powershell    # 指定 shell 类型
 ```
 
 ## 为什么去中心化？
@@ -109,6 +118,7 @@ shellcluster connect my-desktop bash    # 指定 shell 类型
 | NAT 穿透 | tunnel 内置 | 需要端口转发 / VPN |
 | 节点发现 | 自动 | 手动维护清单 |
 | 单点故障 | 没有 | 跳板机挂了 = 全部断连 |
+| 跨平台 | macOS + Windows + Linux | 各系统 SSH 服务配置不同 |
 
 ## 命令参考
 
@@ -126,7 +136,11 @@ shellcluster connect my-desktop bash    # 指定 shell 类型
 
 ## 配置文件
 
-路径：`~/.config/shell-cluster/config.toml`
+| 系统 | 配置路径 |
+|------|---------|
+| macOS | `~/Library/Application Support/shell-cluster/config.toml` |
+| Linux | `~/.config/shell-cluster/config.toml` |
+| Windows | `%APPDATA%\shell-cluster\config.toml` |
 
 ```toml
 [node]
@@ -143,7 +157,7 @@ interval_seconds = 30      # 节点发现刷新间隔
 manual_peers = []          # 手动添加的节点 tunnel ID
 
 [shell]
-command = ""               # 默认 shell，留空则使用 $SHELL
+command = ""               # 默认 shell，留空则自动检测（Unix: $SHELL / Windows: %COMSPEC%）
 ```
 
 ## 开发
@@ -163,9 +177,12 @@ uv run shellcluster connect ws://localhost:8765
 
 ## Roadmap
 
+- [x] macOS + Linux 支持（PTY）
+- [x] Windows 支持（winpty/conpty）
+- [x] 本地模式（无 tunnel）
+- [x] MS Dev Tunnel 后端
 - [ ] Cloudflare Tunnel 后端
 - [ ] E2E 加密
-- [ ] Windows 支持（conpty）
 - [ ] Web UI（HTML）
 - [ ] 文件传输
 - [ ] 与 [easy-service](https://github.com/billxc/easy-service) 集成，注册为系统服务

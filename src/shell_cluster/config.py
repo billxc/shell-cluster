@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -49,6 +50,13 @@ class Config:
     def get_shell_command(self) -> str:
         if self.shell.command:
             return self.shell.command
+        if sys.platform == "win32":
+            # Prefer pwsh (PowerShell 7+) over legacy powershell.exe
+            import shutil
+
+            if shutil.which("pwsh"):
+                return "pwsh.exe"
+            return os.environ.get("COMSPEC", "powershell.exe")
         return os.environ.get("SHELL", "/bin/sh")
 
 

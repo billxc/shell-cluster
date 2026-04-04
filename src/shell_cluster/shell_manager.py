@@ -1,31 +1,38 @@
-"""Manage multiple PTY shell sessions on the local machine."""
+"""Manage multiple PTY shell sessions on the local machine.
+
+Cross-platform: uses pty/fork on Unix, winpty on Windows.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import logging
 import os
-import pty
-import signal
-import struct
-import termios
+import sys
 from typing import Awaitable, Callable
 
 from shell_cluster.models import ShellSession
 
 log = logging.getLogger(__name__)
 
-# Callback types: async functions that will be called from the read loop
+IS_WINDOWS = sys.platform == "win32"
+
+# Callback types
 OnOutputCallback = Callable[[str, bytes], Awaitable[None]]
 OnExitCallback = Callable[[str], Awaitable[None]]
 
 
 class ShellManager:
-    """Manages multiple PTY shell sessions."""
+    """Manages multiple PTY shell sessions (cross-platform)."""
 
     def __init__(self, default_shell: str = ""):
-        self._default_shell = default_shell or os.environ.get("SHELL", "/bin/sh")
+        if default_shell:
+            self._default_shell = default_shell
+        elif IS_WINDOWS:
+            self._default_shell = os.environ.get("COMSPEC", "cmd.exe")
+        else:
+            self._default_shell = os.environ.get("SHELL", "/bin/sh")
+
         self._sessions: dict[str, ShellSession] = {}
         self._readers: dict[str, asyncio.Task] = {}
 
@@ -45,14 +52,41 @@ class ShellManager:
         """Create a new PTY shell session."""
         shell_cmd = shell or self._default_shell
 
-        # Create PTY
+        if IS_WINDOWS:
+            session = await self._create_windows(session_id, shell_cmd, cols, rows)
+        else:
+            session = await self._create_unix(session_id, shell_cmd, cols, rows)
+
+        self._sessions[session_id] = session
+
+        if on_output:
+            task = asyncio.create_task(
+                self._read_loop(session, on_output, on_exit)
+            )
+            self._readers[session_id] = task
+
+        log.info(
+            "Created shell session %s (pid=%d, shell=%s)",
+            session_id, session.pid, shell_cmd,
+        )
+        return session
+
+    # ── Unix implementation ──────────────────────────────────────────
+
+    async def _create_unix(
+        self, session_id: str, shell_cmd: str, cols: int, rows: int,
+    ) -> ShellSession:
+        import fcntl
+        import pty
+        import struct
+        import termios
+
         master_fd, slave_fd = pty.openpty()
 
         # Set terminal size
         winsize = struct.pack("HHHH", rows, cols, 0, 0)
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
 
-        # Fork the shell process
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
 
@@ -70,33 +104,41 @@ class ShellManager:
             os.execvpe(shell_cmd, [shell_cmd], env)
             os._exit(1)
 
-        # Parent process
+        # Parent
         os.close(slave_fd)
-        # Keep master_fd BLOCKING - the read loop runs in a thread executor
-        # so blocking reads won't block the event loop
+        # Keep master_fd BLOCKING - read loop runs in thread executor
 
-        session = ShellSession(
+        return ShellSession(
             session_id=session_id,
             shell=os.path.basename(shell_cmd),
             pid=pid,
-            master_fd=master_fd,
+            _handle=master_fd,
         )
-        self._sessions[session_id] = session
 
-        # Start reading output from the PTY
-        if on_output:
-            task = asyncio.create_task(
-                self._read_loop(session_id, master_fd, on_output, on_exit)
-            )
-            self._readers[session_id] = task
+    # ── Windows implementation ───────────────────────────────────────
 
-        log.info("Created shell session %s (pid=%d, shell=%s)", session_id, pid, shell_cmd)
-        return session
+    async def _create_windows(
+        self, session_id: str, shell_cmd: str, cols: int, rows: int,
+    ) -> ShellSession:
+        from winpty import PtyProcess
+
+        proc = PtyProcess.spawn(
+            shell_cmd,
+            dimensions=(rows, cols),
+        )
+
+        return ShellSession(
+            session_id=session_id,
+            shell=os.path.basename(shell_cmd),
+            pid=proc.pid,
+            _handle=proc,
+        )
+
+    # ── Read loop (cross-platform) ──────────────────────────────────
 
     async def _read_loop(
         self,
-        session_id: str,
-        master_fd: int,
+        session: ShellSession,
         on_output: OnOutputCallback,
         on_exit: OnExitCallback | None,
     ) -> None:
@@ -104,24 +146,33 @@ class ShellManager:
         loop = asyncio.get_event_loop()
         try:
             while True:
-                # Blocking read in thread pool - fd is blocking mode
-                data = await loop.run_in_executor(None, self._blocking_read, master_fd)
+                data = await loop.run_in_executor(
+                    None, self._blocking_read, session
+                )
                 if not data:
                     break
-                await on_output(session_id, data)
+                await on_output(session.session_id, data)
         except (OSError, IOError):
             pass
         finally:
             if on_exit:
-                await on_exit(session_id)
+                await on_exit(session.session_id)
 
     @staticmethod
-    def _blocking_read(fd: int) -> bytes:
-        """Blocking read from file descriptor."""
+    def _blocking_read(session: ShellSession) -> bytes:
+        """Blocking read from PTY (cross-platform)."""
         try:
-            return os.read(fd, 4096)
-        except OSError:
+            if IS_WINDOWS:
+                # winpty PtyProcess
+                proc = session._handle
+                return proc.read(4096).encode("utf-8", errors="replace")
+            else:
+                # Unix fd
+                return os.read(session._handle, 4096)
+        except (OSError, EOFError):
             return b""
+
+    # ── Write (cross-platform) ──────────────────────────────────────
 
     async def write(self, session_id: str, data: bytes) -> None:
         """Write data to a shell session's PTY."""
@@ -129,22 +180,36 @@ class ShellManager:
         if not session:
             return
         try:
-            os.write(session.master_fd, data)
+            if IS_WINDOWS:
+                session._handle.write(data.decode("utf-8", errors="replace"))
+            else:
+                os.write(session._handle, data)
         except OSError:
             log.warning("Failed to write to session %s", session_id)
+
+    # ── Resize (cross-platform) ─────────────────────────────────────
 
     async def resize(self, session_id: str, cols: int, rows: int) -> None:
         """Resize a shell session's terminal."""
         session = self._sessions.get(session_id)
         if not session:
             return
-        winsize = struct.pack("HHHH", rows, cols, 0, 0)
         try:
-            fcntl.ioctl(session.master_fd, termios.TIOCSWINSZ, winsize)
-            # Send SIGWINCH to the process group
-            os.killpg(os.getpgid(session.pid), signal.SIGWINCH)
+            if IS_WINDOWS:
+                session._handle.setwinsize(rows, cols)
+            else:
+                import fcntl
+                import signal
+                import struct
+                import termios
+
+                winsize = struct.pack("HHHH", rows, cols, 0, 0)
+                fcntl.ioctl(session._handle, termios.TIOCSWINSZ, winsize)
+                os.killpg(os.getpgid(session.pid), signal.SIGWINCH)
         except OSError:
             log.warning("Failed to resize session %s", session_id)
+
+    # ── Close (cross-platform) ──────────────────────────────────────
 
     async def close(self, session_id: str) -> None:
         """Close a shell session."""
@@ -157,15 +222,15 @@ class ShellManager:
         if reader:
             reader.cancel()
 
-        # Close PTY
         try:
-            os.close(session.master_fd)
-        except OSError:
-            pass
-
-        # Kill the process
-        try:
-            os.kill(session.pid, signal.SIGTERM)
+            if IS_WINDOWS:
+                proc = session._handle
+                if proc.isalive():
+                    proc.terminate(force=True)
+            else:
+                os.close(session._handle)
+                import signal
+                os.kill(session.pid, signal.SIGTERM)
         except OSError:
             pass
 

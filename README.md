@@ -2,25 +2,32 @@
 
 Decentralized remote shell access across all your machines. No central server required.
 
-Each machine runs a lightweight daemon that peers discover automatically via shared tunnel credentials. Connect to any machine's shell from anywhere -- like SSH, but without managing keys or servers.
+**Cross-platform** (macOS / Windows / Linux) -- each machine runs a lightweight daemon that peers discover automatically via shared tunnel credentials. Connect to any machine's shell from anywhere, like SSH but without managing keys or servers.
+
+[中文文档](README_CN.md)
 
 ## How It Works
 
 ```
-Machine A                              Machine B
-┌───────────────────┐                 ┌───────────────────┐
-│ daemon            │                 │ daemon            │
-│  ├ zsh #1         │                 │  ├ bash #1        │
-│  └ bash #2        │                 │  └ zsh #2         │
-│ WebSocket :8765   │                 │ WebSocket :8765   │
-└────────┬──────────┘                 └────────┬──────────┘
-         │                                     │
-    ═════╪══ Tunnel (P2P, no server) ══════════╪═════
-         │                                     │
-    CLI / TUI Dashboard (from any machine)
+macOS (zsh)                Windows (PowerShell)         Linux (bash)
+┌──────────────┐          ┌──────────────┐          ┌──────────────┐
+│ daemon :8765 │          │ daemon :8765 │          │ daemon :8765 │
+└──────┬───────┘          └──────┬───────┘          └──────┬───────┘
+       │                         │                         │
+  ═════╪═════════ Tunnel (P2P, no server) ═════════════════╪═════
+       │                         │                         │
+  CLI / TUI Dashboard (from any machine, any OS)
 ```
 
 **No central server.** Every node is equal. Nodes discover each other by querying the tunnel provider's API for tunnels tagged with a shared label -- all under the same account. No relay, no coordinator, no single point of failure.
+
+## Platform Support
+
+| Platform | Server (daemon) | Client (connect) | Shell |
+|----------|:-:|:-:|---|
+| macOS | Yes | Yes | zsh, bash, fish, ... |
+| Windows | Yes | Yes | pwsh (PS 7+), PowerShell, cmd, Git Bash, ... |
+| Linux | Yes | Yes | bash, zsh, fish, ... |
 
 ## Install
 
@@ -36,6 +43,8 @@ uv tool install .
 uv tool install git+https://github.com/billxc/shell-cluster
 ```
 
+Works on macOS, Windows, and Linux with the same command.
+
 ## Quick Start (Local Mode)
 
 No tunnel needed. Works over LAN or localhost for testing.
@@ -43,21 +52,21 @@ No tunnel needed. Works over LAN or localhost for testing.
 ### 1. Start daemons
 
 ```bash
-# Terminal 1
-shellcluster start --no-tunnel --name node-a --port 8765
+# Terminal 1 (e.g., your Mac)
+shellcluster start --no-tunnel --name macbook --port 8765
 
-# Terminal 2
-shellcluster start --no-tunnel --name node-b --port 8766
+# Terminal 2 (e.g., your Windows PC)
+shellcluster start --no-tunnel --name windows-pc --port 8766
 ```
 
 ### 2. Connect
 
 ```bash
-# Terminal 3
+# From any machine
 shellcluster connect ws://localhost:8765
 ```
 
-You're now in node-a's shell. Type `exit` or press `~.` (tilde-dot after newline) to disconnect.
+You're now in the remote shell. Type `exit` or press `~.` (tilde-dot after newline) to disconnect.
 
 ### 3. TUI Dashboard
 
@@ -71,7 +80,7 @@ For machines on different networks. Currently supports MS Dev Tunnel.
 
 ### Prerequisites
 
-Install [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started) and log in with the **same Microsoft account** on every machine:
+Install [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started) on each machine (available for macOS, Windows, and Linux) and log in with the **same Microsoft account**:
 
 ```bash
 devtunnel user login
@@ -97,7 +106,7 @@ shellcluster peers
 
 # Connect by name
 shellcluster connect my-desktop
-shellcluster connect my-desktop bash    # specify shell
+shellcluster connect my-desktop powershell    # specify shell type
 ```
 
 ## Why Decentralized?
@@ -109,6 +118,7 @@ shellcluster connect my-desktop bash    # specify shell
 | NAT traversal | Built-in via tunnel | Port forwarding / VPN |
 | Discovery | Automatic | Manual inventory |
 | Single point of failure | None | Bastion goes down = no access |
+| Cross-platform | macOS + Windows + Linux | SSH server setup varies per OS |
 
 ## Command Reference
 
@@ -126,7 +136,11 @@ shellcluster connect my-desktop bash    # specify shell
 
 ## Configuration
 
-Path: `~/.config/shell-cluster/config.toml`
+| OS | Config path |
+|---|---|
+| macOS | `~/Library/Application Support/shell-cluster/config.toml` |
+| Linux | `~/.config/shell-cluster/config.toml` |
+| Windows | `%APPDATA%\shell-cluster\config.toml` |
 
 ```toml
 [node]
@@ -143,7 +157,7 @@ interval_seconds = 30      # Discovery refresh interval
 manual_peers = []          # Manually added tunnel IDs
 
 [shell]
-command = ""               # Default shell, empty = $SHELL
+command = ""               # Default shell, empty = $SHELL (Unix) / %COMSPEC% (Windows)
 ```
 
 ## Development
@@ -163,9 +177,12 @@ uv run shellcluster connect ws://localhost:8765
 
 ## Roadmap
 
+- [x] macOS + Linux support (PTY)
+- [x] Windows support (winpty/conpty)
+- [x] Local mode (no tunnel)
+- [x] MS Dev Tunnel backend
 - [ ] Cloudflare Tunnel backend
 - [ ] E2E encryption
-- [ ] Windows support (conpty)
 - [ ] Web UI (HTML)
 - [ ] File transfer
 - [ ] [easy-service](https://github.com/billxc/easy-service) integration for system service registration

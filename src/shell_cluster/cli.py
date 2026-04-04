@@ -188,12 +188,38 @@ def connect(target: str, shell_type: str) -> None:
 
 
 @main.command()
-def dashboard() -> None:
-    """Open the TUI dashboard."""
+@click.option("--peers", "-p", multiple=True, help="Peer URIs (e.g. ws://host:port or name=ws://host:port)")
+def dashboard(peers: tuple[str, ...]) -> None:
+    """Open the TUI dashboard.
+
+    In local mode, pass peers directly:
+
+        shellcluster dashboard -p node-a=ws://localhost:8765 -p node-b=ws://localhost:8766
+    """
+    from shell_cluster.models import Peer, PeerStatus
     from shell_cluster.tui.app import ShellClusterApp
 
     config = load_config()
-    app = ShellClusterApp(config)
+
+    # Parse manual peers from CLI
+    manual_peers: list[Peer] = []
+    for p in peers:
+        if "=" in p:
+            name, uri = p.split("=", 1)
+        else:
+            # Derive name from host:port
+            name = p.replace("ws://", "").replace("wss://", "").replace(":", "-")
+            uri = p
+        if not uri.startswith("ws://") and not uri.startswith("wss://"):
+            uri = f"ws://{uri}"
+        manual_peers.append(Peer(
+            name=name,
+            tunnel_id=f"manual-{name}",
+            forwarding_uri=uri,
+            status=PeerStatus.ONLINE,
+        ))
+
+    app = ShellClusterApp(config, manual_peers=manual_peers)
     app.run()
 
 

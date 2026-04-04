@@ -184,8 +184,9 @@ class ShellManager:
                 session._handle.write(data.decode("utf-8", errors="replace"))
             else:
                 os.write(session._handle, data)
-        except OSError:
-            log.warning("Failed to write to session %s", session_id)
+        except OSError as e:
+            log.warning("Failed to write to session %s: %s (handle=%r, pid=%d)",
+                        session_id, e, session._handle, session.pid)
 
     # ── Resize (cross-platform) ─────────────────────────────────────
 

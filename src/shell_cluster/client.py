@@ -33,6 +33,7 @@ class ShellClient:
         self._uri = uri
         self._ws: websockets.asyncio.client.ClientConnection | None = None
         self._session_id: str = ""
+        self._done = False
 
     async def connect_and_run(self, shell: str = "") -> None:
         """Connect to a remote peer, create a shell, and enter raw terminal mode."""
@@ -44,6 +45,7 @@ class ShellClient:
 
         async with websockets.connect(ws_uri) as ws:
             self._ws = ws
+            self._done = False
 
             # Read peer info
             raw = await ws.recv()
@@ -89,11 +91,24 @@ class ShellClient:
         old_settings = termios.tcgetattr(sys.stdin.fileno())
         try:
             tty.setraw(sys.stdin.fileno())
-            await asyncio.gather(
-                self._read_stdin_unix(ws),
-                self._read_ws(ws),
-                return_exceptions=True,
+
+            # Use tasks so we can cancel stdin reader when ws reader finishes
+            stdin_task = asyncio.create_task(self._read_stdin_unix(ws))
+            ws_task = asyncio.create_task(self._read_ws(ws))
+
+            # Wait for either to finish (ws_task finishes when shell exits)
+            done, pending = await asyncio.wait(
+                [stdin_task, ws_task],
+                return_when=asyncio.FIRST_COMPLETED,
             )
+
+            # Cancel the other task
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         finally:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
 
@@ -103,10 +118,14 @@ class ShellClient:
         loop = asyncio.get_event_loop()
         escape_state = 0
 
-        while True:
-            data = await loop.run_in_executor(
-                None, lambda: self._blocking_read_unix()
-            )
+        while not self._done:
+            try:
+                data = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._blocking_read_unix),
+                    timeout=0.5,
+                )
+            except asyncio.TimeoutError:
+                continue
             if not data:
                 break
 
@@ -118,13 +137,19 @@ class ShellClient:
                     escape_state = 2
                 elif escape_state == 2 and byte == ord("."):
                     close_msg = make_shell_close(self._session_id)
-                    await ws.send(close_msg.to_json())
+                    try:
+                        await ws.send(close_msg.to_json())
+                    except websockets.ConnectionClosed:
+                        pass
                     return
                 else:
                     escape_state = 0
 
-            msg = make_shell_data(self._session_id, data)
-            await ws.send(msg.to_json())
+            try:
+                msg = make_shell_data(self._session_id, data)
+                await ws.send(msg.to_json())
+            except websockets.ConnectionClosed:
+                return
 
     @staticmethod
     def _blocking_read_unix() -> bytes:
@@ -138,14 +163,21 @@ class ShellClient:
     async def _raw_session_windows(
         self, ws: websockets.asyncio.client.ClientConnection,
     ) -> None:
-        # Enable virtual terminal input on Windows console
         old_mode = self._enable_win_vt_input()
         try:
-            await asyncio.gather(
-                self._read_stdin_windows(ws),
-                self._read_ws(ws),
-                return_exceptions=True,
+            stdin_task = asyncio.create_task(self._read_stdin_windows(ws))
+            ws_task = asyncio.create_task(self._read_ws(ws))
+
+            done, pending = await asyncio.wait(
+                [stdin_task, ws_task],
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         finally:
             self._restore_win_console_mode(old_mode)
 
@@ -164,7 +196,6 @@ class ShellClient:
             old_mode = wintypes.DWORD()
             kernel32.GetConsoleMode(handle, ctypes.byref(old_mode))
 
-            # Raw mode: disable line input and echo, enable VT input
             new_mode = ENABLE_VIRTUAL_TERMINAL_INPUT
             kernel32.SetConsoleMode(handle, new_mode)
             return old_mode.value
@@ -193,23 +224,20 @@ class ShellClient:
         escape_state = 0
 
         def _read_win() -> bytes:
-            """Read available bytes from Windows console."""
             buf = b""
             while msvcrt.kbhit():
                 ch = msvcrt.getch()
                 buf += ch
             if not buf:
-                # No key available, small sleep to avoid busy loop
                 import time
-                time.sleep(0.01)
+                time.sleep(0.05)
             return buf
 
-        while True:
+        while not self._done:
             data = await loop.run_in_executor(None, _read_win)
             if not data:
                 continue
 
-            # Detect ~. escape
             for byte in data:
                 if escape_state == 0 and byte in (ord("\r"), ord("\n")):
                     escape_state = 1
@@ -217,13 +245,19 @@ class ShellClient:
                     escape_state = 2
                 elif escape_state == 2 and byte == ord("."):
                     close_msg = make_shell_close(self._session_id)
-                    await ws.send(close_msg.to_json())
+                    try:
+                        await ws.send(close_msg.to_json())
+                    except websockets.ConnectionClosed:
+                        pass
                     return
                 else:
                     escape_state = 0
 
-            msg = make_shell_data(self._session_id, data)
-            await ws.send(msg.to_json())
+            try:
+                msg = make_shell_data(self._session_id, data)
+                await ws.send(msg.to_json())
+            except websockets.ConnectionClosed:
+                return
 
     # ── WebSocket reader (shared) ────────────────────────────────────
 
@@ -237,9 +271,12 @@ class ShellClient:
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
                 elif msg.type == MsgType.SHELL_CLOSED:
+                    self._done = True
                     break
                 elif msg.type == MsgType.ERROR:
                     print(f"\r\nError: {msg.error}\r\n", file=sys.stderr)
+                    self._done = True
                     break
         except websockets.ConnectionClosed:
             pass
+        self._done = True

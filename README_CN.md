@@ -108,25 +108,19 @@ shellcluster dashboard
 
 ```toml
 [node]
-name = "my-macbook"        # 节点名称，默认为 hostname
-label = "shellcluster"     # tunnel 标签，用于节点发现
-port = 8765                # WebSocket 服务端口
+name = "my-macbook"        # 节点名称，显示在 peers 和 dashboard 中
+label = "shellcluster"     # Tunnel 标签 —— 相同标签 = 同一个 cluster
+port = 8765                # WebSocket 端口（仅本地模式）
 
 [tunnel]
-backend = "devtunnel"      # tunnel 后端（目前仅 devtunnel）
-expiration = "8h"          # tunnel 过期时间
+backend = "devtunnel"      # Tunnel 后端
+expiration = "8h"          # Tunnel 自动过期时间
 
 [discovery]
-interval_seconds = 30      # 节点发现刷新间隔
-manual_peers = []          # 手动添加的节点 tunnel ID
+interval_seconds = 30      # 节点刷新间隔（秒）
 
 [shell]
-command = ""               # 默认 shell，留空则自动检测（Unix: $SHELL / Windows: %COMSPEC%）
-
-# 本地/局域网模式的手动 peers（可选）
-# [[peers]]
-# name = "my-desktop"
-# uri = "ws://192.168.1.20:8765"
+command = ""               # 默认 shell（留空 = 自动检测）
 ```
 
 ## 开发

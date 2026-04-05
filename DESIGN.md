@@ -175,6 +175,33 @@ TOML config at platform-specific path:
 
 Sections: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
 
+### Config fields
+
+```toml
+[node]
+name = "my-macbook"        # Node name, shown in peers list and dashboard
+label = "shellcluster"     # Tunnel label — same label = same cluster
+port = 8765                # WebSocket port for local mode; tunnel mode uses random port
+
+[tunnel]
+backend = "devtunnel"      # Tunnel backend ("devtunnel" for now)
+expiration = "8h"          # Tunnel expiration (cloud auto-cleanup)
+
+[discovery]
+interval_seconds = 30      # Peer list refresh interval (seconds) when daemon is running
+manual_peers = []          # Reserved, not used yet
+
+[shell]
+command = ""               # Default shell. Empty = auto-detect
+                           # Unix: $SHELL → /bin/sh
+                           # Windows: pwsh → powershell → cmd
+
+# Manual peers for LAN/direct connections (optional, additive with tunnel discovery)
+# [[peers]]
+# name = "my-desktop"
+# uri = "ws://192.168.1.20:8765"
+```
+
 ## CLI Commands
 
 ### `shellcluster register --name <name>`

@@ -18,33 +18,33 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 @dataclass
 class NodeConfig:
-    name: str = field(default_factory=socket.gethostname)
-    label: str = "shellcluster"
-    port: int = 8765
+    name: str = field(default_factory=socket.gethostname)  # Node name, shown in peers/dashboard
+    label: str = "shellcluster"  # Tunnel label for peer discovery (same label = same cluster)
+    port: int = 8765  # WebSocket port for local mode (--no-tunnel); tunnel mode uses random port
 
 
 @dataclass
 class TunnelConfig:
-    backend: str = "devtunnel"
-    expiration: str = "8h"
+    backend: str = "devtunnel"  # Tunnel backend: "devtunnel" (more backends planned)
+    expiration: str = "8h"  # Tunnel expiration time (cloud auto-cleanup)
 
 
 @dataclass
 class DiscoveryConfig:
-    interval_seconds: int = 30
-    manual_peers: list[str] = field(default_factory=list)
+    interval_seconds: int = 30  # How often daemon refreshes peer list (seconds)
+    manual_peers: list[str] = field(default_factory=list)  # Reserved, not used yet
 
 
 @dataclass
 class PeerConfig:
-    """A manually configured peer."""
-    name: str = ""
-    uri: str = ""
+    """A manually configured peer for LAN/direct connections."""
+    name: str = ""  # Display name
+    uri: str = ""  # WebSocket URI, e.g. ws://192.168.1.10:8765
 
 
 @dataclass
 class ShellConfig:
-    command: str = ""  # empty = $SHELL or /bin/sh
+    command: str = ""  # Default shell. Empty = auto-detect ($SHELL on Unix, pwsh/powershell/cmd on Windows)
 
 
 @dataclass

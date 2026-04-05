@@ -108,25 +108,19 @@ Opens your browser — left sidebar shows all discovered peers, right side is a 
 
 ```toml
 [node]
-name = "my-macbook"        # Node name, defaults to hostname
-label = "shellcluster"     # Tunnel label for peer discovery
-port = 8765                # WebSocket server port
+name = "my-macbook"        # Node name, shown in peers and dashboard
+label = "shellcluster"     # Tunnel label — same label = same cluster
+port = 8765                # WebSocket port (local mode only)
 
 [tunnel]
-backend = "devtunnel"      # Tunnel backend (devtunnel for now)
-expiration = "8h"          # Tunnel expiration
+backend = "devtunnel"      # Tunnel backend
+expiration = "8h"          # Tunnel auto-expiration
 
 [discovery]
-interval_seconds = 30      # Discovery refresh interval
-manual_peers = []          # Manually added tunnel IDs
+interval_seconds = 30      # Peer refresh interval (seconds)
 
 [shell]
-command = ""               # Default shell, empty = $SHELL (Unix) / %COMSPEC% (Windows)
-
-# Manual peers for local/LAN mode (optional)
-# [[peers]]
-# name = "my-desktop"
-# uri = "ws://192.168.1.20:8765"
+command = ""               # Default shell (empty = auto-detect)
 ```
 
 ## Development

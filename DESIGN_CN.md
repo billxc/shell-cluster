@@ -175,6 +175,34 @@ TOML 配置文件，平台特定路径：
 
 配置节: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
 
+### 配置字段说明
+
+```toml
+[node]
+name = "my-macbook"        # 节点名称，显示在 peers 列表和 dashboard 中
+# 默认为本机 hostname
+label = "shellcluster"     # Tunnel 标签 —— 相同标签的节点互相发现
+port = 8765                # 本地模式的 WebSocket 端口；tunnel 模式使用随机端口，此字段忽略
+
+[tunnel]
+backend = "devtunnel"      # Tunnel 后端（目前仅 "devtunnel"）
+expiration = "8h"          # Tunnel 过期时间，到期后云端自动清理
+
+[discovery]
+interval_seconds = 30      # daemon 运行时节点刷新间隔（秒）
+manual_peers = []          # 预留字段，暂未使用
+
+[shell]
+command = ""               # 默认 shell，留空 = 自动检测
+                           # Unix: $SHELL → /bin/sh
+                           # Windows: pwsh → powershell → cmd
+
+# 手动 peers，用于局域网/直连（可选，与 tunnel 发现叠加）
+# [[peers]]
+# name = "my-desktop"
+# uri = "ws://192.168.1.20:8765"
+```
+
 ## CLI 命令
 
 ### `shellcluster register --name <名称>`

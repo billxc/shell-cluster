@@ -152,11 +152,13 @@ class DevTunnelBackend:
             labels = item.get("labels", [])
             ports = item.get("ports", [])
             port = ports[0].get("portNumber", 0) if ports else 0
+            host_conns = item.get("hostConnections", 0)
             tunnels.append(TunnelInfo(
                 tunnel_id=tid,
                 labels=labels,
                 port=port,
                 description=desc,
+                hosting=host_conns > 0,
             ))
         return tunnels
 
@@ -172,12 +174,11 @@ class DevTunnelBackend:
         tunnel_data = data.get("tunnel", data)
         for p in tunnel_data.get("ports", []):
             pnum = p.get("portNumber", 0)
+            # Match specific port, or take first port if port=0 (from list without port details)
             if pnum == port or port == 0:
-                # Prefer portUri
                 uri = p.get("portUri", "")
                 if uri:
                     return uri
-                # Fallback to portForwardingUris
                 uris = p.get("portForwardingUris", [])
                 if uris:
                     return uris[0]

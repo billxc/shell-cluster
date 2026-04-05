@@ -23,6 +23,7 @@ class TunnelInfo:
     port: int = 0
     description: str = ""
     forwarding_uri: str = ""
+    hosting: bool = False  # True if a host process is connected
 
 
 @dataclass

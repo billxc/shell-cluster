@@ -43,6 +43,9 @@ class PeerDiscovery:
 
         seen: set[str] = set()
         for t in tunnels:
+            # Skip tunnels that are not actively hosted
+            if not t.hosting:
+                continue
             seen.add(t.tunnel_id)
 
             if t.tunnel_id in self._peers:

@@ -177,14 +177,45 @@ Sections: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
 
 ## CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `shellcluster register --name X` | Save node config |
-| `shellcluster unregister` | Delete tunnel + config |
-| `shellcluster start` | Start daemon (tunnel mode) |
-| `shellcluster start --no-tunnel` | Start daemon (local mode) |
-| `shellcluster peers` | List discovered peers |
-| `shellcluster dashboard` | Open web dashboard |
+### `shellcluster register --name <name>`
+1. Load or create config file
+2. Save node name, port, label, backend to config
+3. Print confirmation
+
+### `shellcluster unregister`
+1. Load config, derive tunnel ID from node name
+2. Call `backend.delete(tunnel_id)` to remove tunnel from cloud
+3. Delete local config file
+
+### `shellcluster start`
+1. Load config
+2. Create `ShellManager` with default shell
+3. Create `ShellServer` (port 0 = random)
+4. Start WebSocket server → get actual port
+5. `ensure_tunnel()` — check if tunnel exists, create if not, update port if changed
+6. `devtunnel host` — start tunnel host subprocess
+7. Start `PeerDiscovery` loop (periodic `list_tunnels`)
+8. Register `atexit` to kill host process on exit
+9. Wait forever (until Ctrl+C or host process exit)
+
+### `shellcluster start --no-tunnel`
+Same as above but skip steps 5-7. Server binds to configured port instead of random.
+
+### `shellcluster peers`
+1. Create `PeerDiscovery` with devtunnel backend
+2. Call `discovery.refresh()` → `list_tunnels(label)` → filter `hostConnections > 0`
+3. For each peer: `get_port_and_uri()` via `devtunnel show --json`
+4. Print Rich table (name, tunnel ID, status, URI)
+
+### `shellcluster dashboard`
+1. Load config peers (manual `[[peers]]`)
+2. Create `PeerDiscovery`, call `refresh()`
+3. For each discovered peer: `devtunnel connect <tunnel-id>` → map to localhost
+4. Merge manual peers + discovered peers (dedup by name)
+5. Start HTTP server (:9000) serving `index.html` with peer list injected
+6. Start WebSocket proxy (browser → localhost mapped port → tunnel → peer)
+7. Open browser
+8. On exit: kill all `devtunnel connect` processes
 
 ## Connection Flow
 

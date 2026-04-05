@@ -177,14 +177,45 @@ TOML 配置文件，平台特定路径：
 
 ## CLI 命令
 
-| 命令 | 说明 |
-|------|------|
-| `shellcluster register --name X` | 保存节点配置 |
-| `shellcluster unregister` | 删除 tunnel + 配置文件 |
-| `shellcluster start` | 启动 daemon（tunnel 模式） |
-| `shellcluster start --no-tunnel` | 启动 daemon（本地模式） |
-| `shellcluster peers` | 列出已发现的节点 |
-| `shellcluster dashboard` | 打开 Web Dashboard |
+### `shellcluster register --name <名称>`
+1. 加载或创建配置文件
+2. 保存节点名、端口、标签、后端到配置
+3. 打印确认信息
+
+### `shellcluster unregister`
+1. 加载配置，从节点名推导 tunnel ID
+2. 调用 `backend.delete(tunnel_id)` 从云端删除 tunnel
+3. 删除本地配置文件
+
+### `shellcluster start`
+1. 加载配置
+2. 创建 `ShellManager`（使用默认 shell）
+3. 创建 `ShellServer`（端口 0 = 系统随机分配）
+4. 启动 WebSocket 服务 → 获取实际端口
+5. `ensure_tunnel()` — 检查 tunnel 是否存在，不存在则创建，端口变了则更新
+6. `devtunnel host` — 启动 tunnel host 子进程
+7. 启动 `PeerDiscovery` 循环（定期 `list_tunnels`）
+8. 注册 `atexit` 确保退出时杀掉 host 进程
+9. 永久等待（直到 Ctrl+C 或 host 进程退出）
+
+### `shellcluster start --no-tunnel`
+同上但跳过步骤 5-7。服务绑定配置文件中的固定端口而非随机端口。
+
+### `shellcluster peers`
+1. 创建 `PeerDiscovery`（devtunnel 后端）
+2. 调用 `discovery.refresh()` → `list_tunnels(label)` → 过滤 `hostConnections > 0`
+3. 对每个节点: `get_port_and_uri()` 通过 `devtunnel show --json`
+4. 用 Rich 表格打印（名称、tunnel ID、状态、URI）
+
+### `shellcluster dashboard`
+1. 加载配置中的手动 peers（`[[peers]]`）
+2. 创建 `PeerDiscovery`，调用 `refresh()` 发现节点
+3. 对每个发现的节点: `devtunnel connect <tunnel-id>` → 映射到 localhost
+4. 合并手动 peers + 发现的节点（按名称去重）
+5. 启动 HTTP 服务 (:9000)，注入 peer 列表到 `index.html`
+6. 启动 WebSocket 代理（浏览器 → localhost 映射端口 → tunnel → peer）
+7. 打开浏览器
+8. 退出时：杀掉所有 `devtunnel connect` 进程
 
 ## 连接流程
 

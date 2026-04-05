@@ -8,32 +8,9 @@ import logging
 import re
 
 from shell_cluster.models import TunnelInfo
+from shell_cluster.tunnel.base import parse_node_name
 
 log = logging.getLogger(__name__)
-
-# Tunnel ID format: shellcluster-<node-id>-shellcluster
-# devtunnel appends a region suffix: shellcluster-<node-id>-shellcluster.jpe1
-TUNNEL_PREFIX = "shellcluster-"
-TUNNEL_SUFFIX = "-shellcluster"
-
-
-def make_tunnel_id(node_name: str) -> str:
-    """Create a tunnel ID from a node name."""
-    return f"{TUNNEL_PREFIX}{node_name}{TUNNEL_SUFFIX}"
-
-
-def parse_node_name(tunnel_id: str) -> str:
-    """Extract node name from a tunnel ID, stripping region suffix.
-
-    Examples:
-        shellcluster-my-mac-shellcluster.jpe1 -> my-mac
-        shellcluster-my-mac-shellcluster -> my-mac
-    """
-    # Strip region suffix (e.g. .jpe1)
-    base = tunnel_id.split(".")[0] if "." in tunnel_id else tunnel_id
-    if base.startswith(TUNNEL_PREFIX) and base.endswith(TUNNEL_SUFFIX):
-        return base[len(TUNNEL_PREFIX):-len(TUNNEL_SUFFIX)]
-    return tunnel_id  # fallback: return raw ID
 
 
 class DevTunnelBackend:

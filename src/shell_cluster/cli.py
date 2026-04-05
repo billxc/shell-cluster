@@ -9,7 +9,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from shell_cluster.config import load_config, save_config
+from shell_cluster.config import Config, load_config, save_config
 
 console = Console()
 
@@ -20,6 +20,21 @@ def setup_logging(verbose: bool) -> None:
         level=level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
+    )
+
+
+def _make_discovery(config: Config):
+    """Create a PeerDiscovery instance from config."""
+    from shell_cluster.discovery import PeerDiscovery
+    from shell_cluster.tunnel.base import get_tunnel_backend, make_tunnel_id
+
+    backend = get_tunnel_backend(config.tunnel.backend)
+    tunnel_id = make_tunnel_id(config.node.name)
+    return PeerDiscovery(
+        backend=backend,
+        label=config.node.label,
+        own_tunnel_id=tunnel_id,
+        interval=config.discovery.interval_seconds,
     )
 
 
@@ -90,17 +105,8 @@ def start(no_tunnel: bool, name: str | None, port: int | None) -> None:
 @main.command()
 def peers() -> None:
     """List discovered peers."""
-    from shell_cluster.discovery import PeerDiscovery
-    from shell_cluster.tunnel.devtunnel import DevTunnelBackend, make_tunnel_id
-
     config = load_config()
-    backend = DevTunnelBackend()
-    tunnel_id = make_tunnel_id(config.node.name)
-    discovery = PeerDiscovery(
-        backend=backend,
-        label=config.node.label,
-        own_tunnel_id=tunnel_id,
-    )
+    discovery = _make_discovery(config)
 
     async def _list() -> None:
         peer_list = await discovery.refresh()
@@ -157,17 +163,8 @@ def connect(target: str, shell_type: str) -> None:
         return
 
     # Peer name lookup via discovery
-    from shell_cluster.discovery import PeerDiscovery
-    from shell_cluster.tunnel.devtunnel import DevTunnelBackend, make_tunnel_id
-
     config = load_config()
-    backend = DevTunnelBackend()
-    tunnel_id = make_tunnel_id(config.node.name)
-    discovery = PeerDiscovery(
-        backend=backend,
-        label=config.node.label,
-        own_tunnel_id=tunnel_id,
-    )
+    discovery = _make_discovery(config)
 
     async def _connect() -> None:
         peer_list = await discovery.refresh()
@@ -227,20 +224,11 @@ def dashboard(dash_port: int, no_open: bool) -> None:
         peer_list.append({"name": name, "uri": uri, "status": "online"})
         seen_uris.add(uri)
 
-    # 2. Always try devtunnel discovery (merge with manual peers)
-    from shell_cluster.discovery import PeerDiscovery
-    from shell_cluster.tunnel.devtunnel import DevTunnelBackend
-
-    from shell_cluster.tunnel.devtunnel import make_tunnel_id
-    tunnel_id = make_tunnel_id(config.node.name)
-    discovery = PeerDiscovery(
-        backend=DevTunnelBackend(),
-        label=config.node.label,
-        own_tunnel_id=tunnel_id,
-    )
+    # 2. Always try tunnel discovery (merge with manual peers)
+    discovery = _make_discovery(config)
 
     try:
-        console.print("[dim]Discovering peers via devtunnel...[/dim]")
+        console.print("[dim]Discovering peers...[/dim]")
         discovered = asyncio.run(discovery.refresh())
         for p in discovered:
             if p.forwarding_uri and p.forwarding_uri not in seen_uris:

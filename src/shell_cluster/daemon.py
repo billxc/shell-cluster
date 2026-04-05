@@ -53,7 +53,7 @@ class Daemon:
                 config.node.name,
                 config.node.port,
             )
-        from shell_cluster.tunnel.devtunnel import make_tunnel_id
+        from shell_cluster.tunnel.base import make_tunnel_id
         self._tunnel_id = make_tunnel_id(config.node.name)
         self._host_process: asyncio.subprocess.Process | None = None
         self._discovery: PeerDiscovery | None = None
@@ -67,8 +67,8 @@ class Daemon:
 
     def _get_tunnel_backend(self):
         if self._tunnel_backend is None:
-            from shell_cluster.tunnel.devtunnel import DevTunnelBackend
-            self._tunnel_backend = DevTunnelBackend()
+            from shell_cluster.tunnel.base import get_tunnel_backend
+            self._tunnel_backend = get_tunnel_backend(self._config.tunnel.backend)
         return self._tunnel_backend
 
     async def start(self) -> None:

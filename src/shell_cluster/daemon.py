@@ -58,8 +58,9 @@ class Daemon:
         if not self._no_tunnel:
             backend = self._get_tunnel_backend()
 
-            # Create tunnel
+            # Delete any existing tunnel with the same ID, then create fresh
             log.info("Creating tunnel %s...", self._tunnel_id)
+            await backend.delete(self._tunnel_id)
             await backend.create(
                 tunnel_id=self._tunnel_id,
                 port=self._config.node.port,

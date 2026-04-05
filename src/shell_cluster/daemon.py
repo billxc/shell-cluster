@@ -70,10 +70,7 @@ class Daemon:
     def _get_tunnel_backend(self):
         if self._tunnel_backend is None:
             from shell_cluster.tunnel.base import get_tunnel_backend
-            self._tunnel_backend = get_tunnel_backend(
-                self._config.tunnel.backend,
-                cloudflare_domain=self._config.tunnel.cloudflare_domain,
-            )
+            self._tunnel_backend = get_tunnel_backend(self._config.tunnel.backend)
         return self._tunnel_backend
 
     def _get_peers_for_dashboard(self) -> list[dict]:

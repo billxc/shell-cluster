@@ -38,7 +38,7 @@ def get_tunnel_backend(backend_name: str = "devtunnel", **kwargs) -> TunnelBacke
         return DevTunnelBackend()
     if backend_name == "cloudflare":
         from shell_cluster.tunnel.cloudflare import CloudflareBackend
-        return CloudflareBackend(domain=kwargs.get("cloudflare_domain", ""))
+        return CloudflareBackend()
     raise ValueError(f"Unknown tunnel backend: {backend_name}")
 
 

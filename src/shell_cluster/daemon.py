@@ -23,11 +23,19 @@ class Daemon:
         self._no_tunnel = no_tunnel
         self._tunnel_backend = None
         self._shell_manager = ShellManager(config.get_shell_command())
-        self._server = ShellServer(
-            self._shell_manager,
-            config.node.name,
-            config.node.port,
-        )
+        if not self._no_tunnel:
+            # Tunnel mode: use random port to avoid conflicts
+            self._server = ShellServer(
+                self._shell_manager,
+                config.node.name,
+                port=0,  # OS-assigned
+            )
+        else:
+            self._server = ShellServer(
+                self._shell_manager,
+                config.node.name,
+                config.node.port,
+            )
         from shell_cluster.tunnel.devtunnel import make_tunnel_id
         self._tunnel_id = make_tunnel_id(config.node.name)
         self._host_process: asyncio.subprocess.Process | None = None
@@ -57,12 +65,17 @@ class Daemon:
                 loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.stop()))
 
         if not self._no_tunnel:
+            # Start shell server first to get the actual port
+            await self._server.start()
+            actual_port = self._server.port
+            log.info("Using port %d for tunnel", actual_port)
+
             backend = self._get_tunnel_backend()
 
             # Reuse existing tunnel or create new one
             await backend.ensure_tunnel(
                 tunnel_id=self._tunnel_id,
-                port=self._config.node.port,
+                port=actual_port,
                 label=self._config.node.label,
                 expiration=self._config.tunnel.expiration,
             )
@@ -70,11 +83,11 @@ class Daemon:
             # Start hosting
             log.info("Starting tunnel host...")
             self._host_process = await backend.host(
-                self._tunnel_id, self._config.node.port
+                self._tunnel_id, actual_port
             )
-
-        # Start shell server
-        await self._server.start()
+        else:
+            # Local mode: start server on configured port
+            await self._server.start()
 
         if not self._no_tunnel:
             # Start discovery

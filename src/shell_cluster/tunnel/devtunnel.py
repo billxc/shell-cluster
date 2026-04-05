@@ -106,9 +106,21 @@ class DevTunnelBackend:
         )
 
     async def ensure_tunnel(self, tunnel_id: str, port: int, label: str, expiration: str = "8h") -> None:
-        """Ensure tunnel exists — reuse if present, create if not."""
+        """Ensure tunnel exists with the right port — reuse if present, create if not."""
         if await self.exists(tunnel_id):
             log.info("Reusing existing tunnel %s", tunnel_id)
+            # Update port: delete old ports and add the new one
+            # (port may change on restart since we use random ports)
+            try:
+                data = await self._run_json("show", tunnel_id)
+                tunnel_data = data.get("tunnel", data)
+                for p in tunnel_data.get("ports", []):
+                    old_port = p.get("portNumber", 0)
+                    if old_port and old_port != port:
+                        await self._run("port", "delete", tunnel_id, "-p", str(old_port), check=False)
+                await self._run("port", "create", tunnel_id, "-p", str(port), check=False)
+            except Exception as e:
+                log.warning("Failed to update tunnel port: %s", e)
         else:
             log.info("Creating new tunnel %s", tunnel_id)
             await self.create(tunnel_id, port, label, expiration)

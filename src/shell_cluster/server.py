@@ -43,7 +43,17 @@ class ShellServer:
             "0.0.0.0",
             self._port,
         )
+        # Update port in case 0 was used (OS-assigned)
+        for sock in self._server.sockets:
+            addr = sock.getsockname()
+            if addr[1] != 0:
+                self._port = addr[1]
+                break
         log.info("Shell server listening on port %d", self._port)
+
+    @property
+    def port(self) -> int:
+        return self._port
 
     async def stop(self) -> None:
         """Stop the server and clean up."""

@@ -91,11 +91,11 @@ def start(no_tunnel: bool, name: str | None, port: int | None) -> None:
 def peers() -> None:
     """List discovered peers."""
     from shell_cluster.discovery import PeerDiscovery
-    from shell_cluster.tunnel.devtunnel import DevTunnelBackend
+    from shell_cluster.tunnel.devtunnel import DevTunnelBackend, make_tunnel_id
 
     config = load_config()
     backend = DevTunnelBackend()
-    tunnel_id = f"shellcluster-{config.node.name}"
+    tunnel_id = make_tunnel_id(config.node.name)
     discovery = PeerDiscovery(
         backend=backend,
         label=config.node.label,
@@ -158,11 +158,11 @@ def connect(target: str, shell_type: str) -> None:
 
     # Peer name lookup via discovery
     from shell_cluster.discovery import PeerDiscovery
-    from shell_cluster.tunnel.devtunnel import DevTunnelBackend
+    from shell_cluster.tunnel.devtunnel import DevTunnelBackend, make_tunnel_id
 
     config = load_config()
     backend = DevTunnelBackend()
-    tunnel_id = f"shellcluster-{config.node.name}"
+    tunnel_id = make_tunnel_id(config.node.name)
     discovery = PeerDiscovery(
         backend=backend,
         label=config.node.label,
@@ -231,7 +231,8 @@ def dashboard(dash_port: int, no_open: bool) -> None:
     from shell_cluster.discovery import PeerDiscovery
     from shell_cluster.tunnel.devtunnel import DevTunnelBackend
 
-    tunnel_id = f"shellcluster-{config.node.name}"
+    from shell_cluster.tunnel.devtunnel import make_tunnel_id
+    tunnel_id = make_tunnel_id(config.node.name)
     discovery = PeerDiscovery(
         backend=DevTunnelBackend(),
         label=config.node.label,

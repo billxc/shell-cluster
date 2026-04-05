@@ -11,6 +11,30 @@ from shell_cluster.models import TunnelInfo
 
 log = logging.getLogger(__name__)
 
+# Tunnel ID format: shellcluster-<node-id>-shellcluster
+# devtunnel appends a region suffix: shellcluster-<node-id>-shellcluster.jpe1
+TUNNEL_PREFIX = "shellcluster-"
+TUNNEL_SUFFIX = "-shellcluster"
+
+
+def make_tunnel_id(node_name: str) -> str:
+    """Create a tunnel ID from a node name."""
+    return f"{TUNNEL_PREFIX}{node_name}{TUNNEL_SUFFIX}"
+
+
+def parse_node_name(tunnel_id: str) -> str:
+    """Extract node name from a tunnel ID, stripping region suffix.
+
+    Examples:
+        shellcluster-my-mac-shellcluster.jpe1 -> my-mac
+        shellcluster-my-mac-shellcluster -> my-mac
+    """
+    # Strip region suffix (e.g. .jpe1)
+    base = tunnel_id.split(".")[0] if "." in tunnel_id else tunnel_id
+    if base.startswith(TUNNEL_PREFIX) and base.endswith(TUNNEL_SUFFIX):
+        return base[len(TUNNEL_PREFIX):-len(TUNNEL_SUFFIX)]
+    return tunnel_id  # fallback: return raw ID
+
 
 class DevTunnelBackend:
     """Wraps the `devtunnel` CLI for tunnel management."""
@@ -49,16 +73,22 @@ class DevTunnelBackend:
         log.warning("Could not parse devtunnel JSON output: %s", output[:200])
         return {}
 
+    async def exists(self, tunnel_id: str) -> bool:
+        """Check if a tunnel exists."""
+        try:
+            await self._run("show", tunnel_id, check=True)
+            return True
+        except RuntimeError:
+            return False
+
     async def create(
         self,
         tunnel_id: str,
         port: int,
         label: str,
-        description: str = "",
         expiration: str = "8h",
     ) -> TunnelInfo:
-        """Create a tunnel, add a port, set description."""
-        # Create tunnel with label and expiration
+        """Create a tunnel and add a port."""
         await self._run(
             "create", tunnel_id,
             "--labels", label,
@@ -66,19 +96,22 @@ class DevTunnelBackend:
             "--allow-anonymous",
         )
 
-        # Add port
         await self._run("port", "create", tunnel_id, "-p", str(port))
-
-        # Set description (node name)
-        if description:
-            await self._run("update", tunnel_id, "-d", description)
 
         return TunnelInfo(
             tunnel_id=tunnel_id,
             labels=[label],
             port=port,
-            description=description,
+            description=parse_node_name(tunnel_id),
         )
+
+    async def ensure_tunnel(self, tunnel_id: str, port: int, label: str, expiration: str = "8h") -> None:
+        """Ensure tunnel exists — reuse if present, create if not."""
+        if await self.exists(tunnel_id):
+            log.info("Reusing existing tunnel %s", tunnel_id)
+        else:
+            log.info("Creating new tunnel %s", tunnel_id)
+            await self.create(tunnel_id, port, label, expiration)
 
     async def host(self, tunnel_id: str, port: int) -> asyncio.subprocess.Process:
         """Start hosting the tunnel as a long-running subprocess."""

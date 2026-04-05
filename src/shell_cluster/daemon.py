@@ -28,7 +28,8 @@ class Daemon:
             config.node.name,
             config.node.port,
         )
-        self._tunnel_id = f"shellcluster-{config.node.name}"
+        from shell_cluster.tunnel.devtunnel import make_tunnel_id
+        self._tunnel_id = make_tunnel_id(config.node.name)
         self._host_process: asyncio.subprocess.Process | None = None
         self._discovery: PeerDiscovery | None = None
         self._discovery_task: asyncio.Task | None = None
@@ -58,14 +59,11 @@ class Daemon:
         if not self._no_tunnel:
             backend = self._get_tunnel_backend()
 
-            # Delete any existing tunnel with the same ID, then create fresh
-            log.info("Creating tunnel %s...", self._tunnel_id)
-            await backend.delete(self._tunnel_id)
-            await backend.create(
+            # Reuse existing tunnel or create new one
+            await backend.ensure_tunnel(
                 tunnel_id=self._tunnel_id,
                 port=self._config.node.port,
                 label=self._config.node.label,
-                description=self._config.node.name,
                 expiration=self._config.tunnel.expiration,
             )
 
@@ -125,11 +123,8 @@ class Daemon:
             except ProcessLookupError:
                 pass
 
-        # Delete tunnel
-        if not self._no_tunnel:
-            backend = self._get_tunnel_backend()
-            log.info("Deleting tunnel %s...", self._tunnel_id)
-            await backend.delete(self._tunnel_id)
+        # Keep tunnel alive for fast restart (it has expiration)
+        # Only kill the host process, don't delete the tunnel
 
         self._stop_event.set()
         log.info("Daemon stopped")

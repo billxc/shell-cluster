@@ -7,6 +7,7 @@ import logging
 
 from shell_cluster.models import Peer, PeerStatus, TunnelInfo
 from shell_cluster.tunnel.base import TunnelBackend
+from shell_cluster.tunnel.devtunnel import parse_node_name
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class PeerDiscovery:
             else:
                 # New peer discovered
                 uri = await self._backend.get_forwarding_uri(t.tunnel_id, t.port)
-                name = t.description or t.tunnel_id
+                name = parse_node_name(t.tunnel_id)
                 peer = Peer(
                     name=name,
                     tunnel_id=t.tunnel_id,

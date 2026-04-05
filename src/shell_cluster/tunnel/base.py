@@ -81,3 +81,13 @@ class TunnelBackend(Protocol):
     async def delete(self, tunnel_id: str) -> None:
         """Delete a tunnel."""
         ...
+
+    async def exists(self, tunnel_id: str) -> bool:
+        """Check if a tunnel exists."""
+        ...
+
+    async def ensure_tunnel(
+        self, tunnel_id: str, port: int, label: str, expiration: str = "8h",
+    ) -> None:
+        """Ensure tunnel exists with the right port — reuse or create."""
+        ...

@@ -173,6 +173,8 @@ command = ""               # 默认 shell，留空则自动检测（Unix: $SHELL
 
 ## 开发
 
+架构详情见 [DESIGN.md](DESIGN.md)。
+
 ```bash
 git clone git@github.com:billxc/shell-cluster.git
 cd shell-cluster

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 
 from shell_cluster.models import TunnelInfo
 from shell_cluster.tunnel.base import parse_node_name

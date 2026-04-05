@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from shell_cluster.models import Peer, PeerStatus, TunnelInfo
+from shell_cluster.models import Peer, PeerStatus
 from shell_cluster.tunnel.base import TunnelBackend, parse_node_name
 
 log = logging.getLogger(__name__)

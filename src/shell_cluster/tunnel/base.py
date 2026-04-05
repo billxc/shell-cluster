@@ -36,15 +36,12 @@ def get_tunnel_backend(backend_name: str = "devtunnel", **kwargs) -> TunnelBacke
     if backend_name == "devtunnel":
         from shell_cluster.tunnel.devtunnel import DevTunnelBackend
         return DevTunnelBackend()
-    if backend_name == "cloudflare":
-        from shell_cluster.tunnel.cloudflare import CloudflareBackend
-        return CloudflareBackend()
     raise ValueError(f"Unknown tunnel backend: {backend_name}")
 
 
 @runtime_checkable
 class TunnelBackend(Protocol):
-    """Protocol for tunnel backends (devtunnel, cloudflare, etc.)."""
+    """Protocol for tunnel backends."""
 
     async def create(
         self,
@@ -75,11 +72,7 @@ class TunnelBackend(Protocol):
     async def connect(
         self, tunnel_id: str, remote_port: int, local_port: int = 0,
     ) -> tuple[asyncio.subprocess.Process | None, str]:
-        """Connect to a peer tunnel. Returns (process_or_None, ws_uri).
-
-        - devtunnel: starts 'devtunnel connect', returns (proc, 'ws://localhost:PORT')
-        - cloudflare: no process needed, returns (None, 'wss://node.domain.com')
-        """
+        """Connect to a peer tunnel. Returns (process_or_None, ws_uri)."""
         ...
 
     async def delete(self, tunnel_id: str) -> None:

@@ -300,7 +300,6 @@ dashboard
 - [x] MS Dev Tunnel 后端
 - [x] Web Dashboard（xterm.js）
 - [x] 会话持久化（shell.attach）
-- [ ] Cloudflare Tunnel 后端
 - [ ] E2E 加密
 - [ ] 文件传输
 - [ ] 系统服务集成（easy-service）

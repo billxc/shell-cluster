@@ -299,7 +299,6 @@ page load → query each peer's session list
 - [x] MS Dev Tunnel backend
 - [x] Web Dashboard (xterm.js)
 - [x] Session persistence (shell.attach)
-- [ ] Cloudflare Tunnel backend
 - [ ] E2E encryption
 - [ ] File transfer
 - [ ] System service integration (easy-service)

@@ -140,7 +140,6 @@ uv run shellcluster start --no-tunnel --name test --port 8765
 - [x] Windows support (winpty/conpty)
 - [x] Local mode (no tunnel)
 - [x] MS Dev Tunnel backend
-- [ ] Cloudflare Tunnel backend
 - [ ] E2E encryption
 - [x] Web Dashboard (xterm.js)
 - [ ] File transfer

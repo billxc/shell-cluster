@@ -106,8 +106,8 @@ class DevTunnelBackend:
         log.info("Starting tunnel host: %s", " ".join(cmd))
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         return proc
 

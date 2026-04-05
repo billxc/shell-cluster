@@ -124,7 +124,7 @@ class Daemon:
             "Daemon running: node=%s, %s, port=%d",
             self._config.node.name,
             mode,
-            self._config.node.port,
+            self._server.port,
         )
 
     async def stop(self) -> None:

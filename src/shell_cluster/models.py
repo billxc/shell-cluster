@@ -44,6 +44,7 @@ class Peer:
 
     name: str
     tunnel_id: str
+    port: int = 0  # remote port on the peer's tunnel
     forwarding_uri: str = ""
     status: PeerStatus = PeerStatus.OFFLINE
     sessions: list[ShellSession] = field(default_factory=list)

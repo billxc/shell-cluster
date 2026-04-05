@@ -163,6 +163,44 @@ class DevTunnelBackend:
         log.warning("Could not determine forwarding URI for %s:%d", tunnel_id, port)
         return ""
 
+    async def get_port_and_uri(self, tunnel_id: str) -> tuple[int, str]:
+        """Get (remote_port, forwarding_uri) for the first port on a tunnel."""
+        try:
+            data = await self._run_json("show", tunnel_id)
+        except Exception:
+            return 0, ""
+        tunnel_data = data.get("tunnel", data)
+        for p in tunnel_data.get("ports", []):
+            port = p.get("portNumber", 0)
+            uri = p.get("portUri", "")
+            if port:
+                return port, uri
+        return 0, ""
+
+    async def connect(
+        self, tunnel_id: str, remote_port: int, local_port: int = 0,
+    ) -> tuple[asyncio.subprocess.Process, int]:
+        """Connect to a tunnel, mapping its ports locally.
+
+        devtunnel connect automatically maps configured ports to the same
+        local port numbers. Returns (process, local_port) where local_port
+        equals remote_port.
+        """
+        cmd = ["devtunnel", "connect", tunnel_id]
+        log.info("Connecting tunnel: %s", " ".join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        # Wait for connection to establish
+        await asyncio.sleep(3)
+        if proc.returncode is not None:
+            stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
+            raise RuntimeError(f"devtunnel connect failed: {stderr}")
+        # devtunnel maps remote port to the same local port
+        return proc, remote_port
+
     async def delete(self, tunnel_id: str) -> None:
         """Delete a tunnel."""
         try:

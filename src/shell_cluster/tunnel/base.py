@@ -65,6 +65,19 @@ class TunnelBackend(Protocol):
         """Get the public forwarding URI for a tunnel port."""
         ...
 
+    async def get_port_and_uri(self, tunnel_id: str) -> tuple[int, str]:
+        """Get (remote_port, forwarding_uri) for the first port on a tunnel."""
+        ...
+
+    async def connect(
+        self, tunnel_id: str, remote_port: int, local_port: int = 0,
+    ) -> tuple[asyncio.subprocess.Process, int]:
+        """Map a tunnel's remote port to a local port.
+
+        Returns (process, actual_local_port).
+        """
+        ...
+
     async def delete(self, tunnel_id: str) -> None:
         """Delete a tunnel."""
         ...

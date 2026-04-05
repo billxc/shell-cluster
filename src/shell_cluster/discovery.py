@@ -50,13 +50,14 @@ class PeerDiscovery:
             if t.tunnel_id in self._peers:
                 self._peers[t.tunnel_id].status = PeerStatus.ONLINE
             else:
-                # New peer discovered
-                uri = await self._backend.get_forwarding_uri(t.tunnel_id, t.port)
+                # New peer discovered — get port info
+                remote_port, forwarding_uri = await self._backend.get_port_and_uri(t.tunnel_id)
                 name = parse_node_name(t.tunnel_id)
                 peer = Peer(
                     name=name,
                     tunnel_id=t.tunnel_id,
-                    forwarding_uri=uri,
+                    port=remote_port,
+                    forwarding_uri=forwarding_uri,
                     status=PeerStatus.ONLINE,
                 )
                 self._peers[t.tunnel_id] = peer

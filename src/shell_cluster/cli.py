@@ -91,10 +91,16 @@ def start(no_tunnel: bool, name: str | None, port: int | None) -> None:
         config.node.port = port
 
     mode = "local" if no_tunnel else "tunnel"
-    console.print(
-        f"Starting daemon for [bold]{config.node.name}[/bold] "
-        f"(mode={mode}, port={config.node.port})..."
-    )
+    if no_tunnel:
+        console.print(
+            f"Starting daemon for [bold]{config.node.name}[/bold] "
+            f"(mode={mode}, port={config.node.port})..."
+        )
+    else:
+        console.print(
+            f"Starting daemon for [bold]{config.node.name}[/bold] "
+            f"(mode={mode})..."
+        )
     daemon = Daemon(config, no_tunnel=no_tunnel)
     try:
         asyncio.run(daemon.run_forever())
@@ -181,15 +187,25 @@ def connect(target: str, shell_type: str) -> None:
                 console.print(f"Available peers: {', '.join(available)}")
             return
 
-        if not peer.forwarding_uri:
-            console.print(f"[red]No forwarding URI for peer '{target}'.[/red]")
+        if not peer.port:
+            console.print(f"[red]No port info for peer '{target}'.[/red]")
             return
 
-        console.print(f"Connecting to [bold]{peer.name}[/bold]...")
-        console.print("[dim]Disconnect: ~. (tilde-dot after newline)[/dim]")
-        client = ShellClient(peer.forwarding_uri)
-        await client.connect_and_run(shell=shell_type)
-        console.print(f"\nDisconnected from {peer.name}.")
+        # Map tunnel to local port via devtunnel connect
+        from shell_cluster.tunnel.base import get_tunnel_backend
+        backend = get_tunnel_backend(config.tunnel.backend)
+
+        console.print(f"Mapping tunnel for [bold]{peer.name}[/bold]...")
+        proc, local_port = await backend.connect(peer.tunnel_id, peer.port)
+        try:
+            console.print(f"Connected via localhost:{local_port}")
+            console.print("[dim]Disconnect: ~. (tilde-dot after newline)[/dim]")
+            client = ShellClient(f"ws://localhost:{local_port}")
+            await client.connect_and_run(shell=shell_type)
+            console.print(f"\nDisconnected from {peer.name}.")
+        finally:
+            proc.kill()
+            await proc.wait()
 
     asyncio.run(_connect())
 
@@ -213,33 +229,49 @@ def dashboard(dash_port: int, no_open: bool) -> None:
     config = load_config()
 
     peer_list: list[dict] = []
-    seen_uris: set[str] = set()
+    seen_names: set[str] = set()
+    tunnel_procs: list = []
 
-    # 1. Read manual peers from config
+    # 1. Read manual peers from config (direct ws:// connections)
     for p in config.peers:
         uri = p.uri
         if not uri.startswith("ws://") and not uri.startswith("wss://"):
             uri = f"ws://{uri}"
         name = p.name or uri.replace("ws://", "").replace("wss://", "").replace(":", "-")
         peer_list.append({"name": name, "uri": uri, "status": "online"})
-        seen_uris.add(uri)
+        seen_names.add(name)
 
-    # 2. Always try tunnel discovery (merge with manual peers)
+    # 2. Discover tunnel peers and map to local ports
     discovery = _make_discovery(config)
 
+    async def _setup_tunnel_peers():
+        from shell_cluster.tunnel.base import get_tunnel_backend
+        backend = get_tunnel_backend(config.tunnel.backend)
+        try:
+            console.print("[dim]Discovering peers...[/dim]")
+            discovered = await discovery.refresh()
+            for p in discovered:
+                if p.name in seen_names or not p.port:
+                    continue
+                try:
+                    proc, local_port = await backend.connect(p.tunnel_id, p.port)
+                    tunnel_procs.append(proc)
+                    peer_list.append({
+                        "name": p.name,
+                        "uri": f"ws://localhost:{local_port}",
+                        "status": p.status.value,
+                    })
+                    seen_names.add(p.name)
+                    console.print(f"  {p.name} -> localhost:{local_port}")
+                except Exception as e:
+                    console.print(f"  [dim]{p.name}: tunnel connect failed ({e})[/dim]")
+        except Exception as e:
+            console.print(f"[dim]Discovery skipped: {e}[/dim]")
+
     try:
-        console.print("[dim]Discovering peers...[/dim]")
-        discovered = asyncio.run(discovery.refresh())
-        for p in discovered:
-            if p.forwarding_uri and p.forwarding_uri not in seen_uris:
-                peer_list.append({
-                    "name": p.name,
-                    "uri": p.forwarding_uri,
-                    "status": p.status.value,
-                })
-                seen_uris.add(p.forwarding_uri)
-    except Exception as e:
-        console.print(f"[dim]Devtunnel discovery skipped: {e}[/dim]")
+        asyncio.run(_setup_tunnel_peers())
+    except Exception:
+        pass
 
     if not peer_list:
         console.print("[yellow]No peers found.[/yellow]")
@@ -251,13 +283,19 @@ def dashboard(dash_port: int, no_open: bool) -> None:
 
     console.print(f"Starting dashboard on [bold]http://127.0.0.1:{dash_port}[/bold]")
     for p in peer_list:
-        console.print(f"  Peer: {p['name']} → {p['uri']}")
+        console.print(f"  Peer: {p['name']} -> {p['uri']}")
 
     server = DashboardServer(peer_list, port=dash_port, no_open=no_open)
     try:
         asyncio.run(server.run_forever())
     except KeyboardInterrupt:
         pass
+    finally:
+        for proc in tunnel_procs:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
 
 
 if __name__ == "__main__":

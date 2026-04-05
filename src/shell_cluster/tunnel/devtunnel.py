@@ -177,12 +177,11 @@ class DevTunnelBackend:
 
     async def connect(
         self, tunnel_id: str, remote_port: int, local_port: int = 0,
-    ) -> tuple[asyncio.subprocess.Process, int]:
+    ) -> tuple[asyncio.subprocess.Process | None, str]:
         """Connect to a tunnel, mapping its ports locally.
 
         devtunnel connect automatically maps configured ports to the same
-        local port numbers. Returns (process, local_port) where local_port
-        equals remote_port.
+        local port numbers. Returns (process, ws_uri).
         """
         cmd = ["devtunnel", "connect", tunnel_id]
         log.info("Connecting tunnel: %s", " ".join(cmd))
@@ -197,7 +196,7 @@ class DevTunnelBackend:
             stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
             raise RuntimeError(f"devtunnel connect failed: {stderr}")
         # devtunnel maps remote port to the same local port
-        return proc, remote_port
+        return proc, f"ws://localhost:{remote_port}"
 
     async def delete(self, tunnel_id: str) -> None:
         """Delete a tunnel."""

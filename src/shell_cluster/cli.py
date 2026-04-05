@@ -123,7 +123,10 @@ def peers() -> None:
     from shell_cluster.tunnel.base import get_tunnel_backend, make_tunnel_id
 
     config = load_config()
-    backend = get_tunnel_backend(config.tunnel.backend)
+    backend = get_tunnel_backend(
+        config.tunnel.backend,
+        cloudflare_domain=config.tunnel.cloudflare_domain,
+    )
     tunnel_id = make_tunnel_id(config.node.name)
     discovery = PeerDiscovery(
         backend=backend,

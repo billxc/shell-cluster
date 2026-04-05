@@ -25,8 +25,9 @@ class NodeConfig:
 
 @dataclass
 class TunnelConfig:
-    backend: str = "devtunnel"  # Tunnel backend: "devtunnel" (more backends planned)
-    expiration: str = "8h"  # Tunnel expiration time (cloud auto-cleanup)
+    backend: str = "devtunnel"  # Tunnel backend: "devtunnel" or "cloudflare"
+    expiration: str = "8h"  # Tunnel expiration time (devtunnel only)
+    cloudflare_domain: str = ""  # e.g. "shellcluster.yourdomain.com" (cloudflare only)
 
 
 @dataclass

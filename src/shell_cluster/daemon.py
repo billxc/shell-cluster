@@ -63,14 +63,17 @@ class Daemon:
         self._discovery_task: asyncio.Task | None = None
         self._dashboard: DashboardServer | None = None
         self._tunnel_connect_procs: dict[str, asyncio.subprocess.Process] = {}
-        self._peer_ports: dict[str, int] = {}  # peer_name -> local_port
+        self._peer_uris: dict[str, str] = {}  # peer_name -> ws:// or wss:// URI
         self._stop_event = asyncio.Event()
         self._stopping = False
 
     def _get_tunnel_backend(self):
         if self._tunnel_backend is None:
             from shell_cluster.tunnel.base import get_tunnel_backend
-            self._tunnel_backend = get_tunnel_backend(self._config.tunnel.backend)
+            self._tunnel_backend = get_tunnel_backend(
+                self._config.tunnel.backend,
+                cloudflare_domain=self._config.tunnel.cloudflare_domain,
+            )
         return self._tunnel_backend
 
     def _get_peers_for_dashboard(self) -> list[dict]:
@@ -97,13 +100,13 @@ class Daemon:
             peers.append({"name": p.name, "uri": uri, "status": "online"})
             seen.add(p.name)
 
-        # Discovered peers (mapped to localhost via devtunnel connect)
-        for name, local_port in self._peer_ports.items():
+        # Discovered peers (connected via tunnel)
+        for name, uri in self._peer_uris.items():
             if name in seen:
                 continue
             peers.append({
                 "name": name,
-                "uri": f"ws://localhost:{local_port}",
+                "uri": uri,
                 "status": "online",
             })
             seen.add(name)
@@ -176,7 +179,7 @@ class Daemon:
         """Called when discovery finds new/lost peers. Manage devtunnel connect."""
         backend = self._get_tunnel_backend()
         current_names = {p.name for p in peers if p.name != self._config.node.name}
-        connected_names = set(self._peer_ports.keys())
+        connected_names = set(self._peer_uris.keys())
 
         # Connect to new peers
         for peer in peers:
@@ -187,12 +190,13 @@ class Daemon:
             if not peer.port:
                 continue
             try:
-                proc, local_port = await backend.connect(peer.tunnel_id, peer.port)
-                self._tunnel_connect_procs[peer.name] = proc
-                self._peer_ports[peer.name] = local_port
-                if proc.pid:
-                    _child_pids.add(proc.pid)
-                log.info("Mapped peer %s -> localhost:%d", peer.name, local_port)
+                proc, ws_uri = await backend.connect(peer.tunnel_id, peer.port)
+                if proc:
+                    self._tunnel_connect_procs[peer.name] = proc
+                    if proc.pid:
+                        _child_pids.add(proc.pid)
+                self._peer_uris[peer.name] = ws_uri
+                log.info("Mapped peer %s -> %s", peer.name, ws_uri)
             except Exception as e:
                 log.warning("Failed to connect to peer %s: %s", peer.name, e)
 
@@ -206,7 +210,7 @@ class Daemon:
                         _child_pids.discard(proc.pid)
                 except ProcessLookupError:
                     pass
-            self._peer_ports.pop(name, None)
+            self._peer_uris.pop(name, None)
             log.info("Disconnected peer %s", name)
 
     async def stop(self) -> None:
@@ -239,7 +243,7 @@ class Daemon:
             except ProcessLookupError:
                 pass
         self._tunnel_connect_procs.clear()
-        self._peer_ports.clear()
+        self._peer_uris.clear()
 
         # Kill host process
         if self._host_process:

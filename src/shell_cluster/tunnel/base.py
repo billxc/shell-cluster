@@ -31,11 +31,14 @@ def parse_node_name(tunnel_id: str) -> str:
     return tunnel_id
 
 
-def get_tunnel_backend(backend_name: str = "devtunnel") -> TunnelBackend:
+def get_tunnel_backend(backend_name: str = "devtunnel", **kwargs) -> TunnelBackend:
     """Create a tunnel backend by name."""
     if backend_name == "devtunnel":
         from shell_cluster.tunnel.devtunnel import DevTunnelBackend
         return DevTunnelBackend()
+    if backend_name == "cloudflare":
+        from shell_cluster.tunnel.cloudflare import CloudflareBackend
+        return CloudflareBackend(domain=kwargs.get("cloudflare_domain", ""))
     raise ValueError(f"Unknown tunnel backend: {backend_name}")
 
 
@@ -71,10 +74,11 @@ class TunnelBackend(Protocol):
 
     async def connect(
         self, tunnel_id: str, remote_port: int, local_port: int = 0,
-    ) -> tuple[asyncio.subprocess.Process, int]:
-        """Map a tunnel's remote port to a local port.
+    ) -> tuple[asyncio.subprocess.Process | None, str]:
+        """Connect to a peer tunnel. Returns (process_or_None, ws_uri).
 
-        Returns (process, actual_local_port).
+        - devtunnel: starts 'devtunnel connect', returns (proc, 'ws://localhost:PORT')
+        - cloudflare: no process needed, returns (None, 'wss://node.domain.com')
         """
         ...
 

@@ -88,7 +88,8 @@ class DevTunnelBackend:
             return []
 
         tunnels = []
-        for item in data if isinstance(data, list) else data.get("value", []):
+        items = data if isinstance(data, list) else data.get("tunnels", data.get("value", []))
+        for item in items:
             tid = item.get("tunnelId", "")
             desc = item.get("description", "")
             labels = item.get("labels", [])
@@ -103,36 +104,26 @@ class DevTunnelBackend:
         return tunnels
 
     async def get_forwarding_uri(self, tunnel_id: str, port: int) -> str:
-        """Get forwarding URI by parsing verbose show output."""
+        """Get forwarding URI from devtunnel show --json."""
         try:
-            output = await self._run("show", tunnel_id, "-v", check=False)
+            data = await self._run_json("show", tunnel_id)
         except Exception:
             log.warning("Failed to get forwarding URI for %s", tunnel_id)
             return ""
 
-        # Try to find portForwardingUris in the verbose output
-        # The verbose output contains HTTP response bodies as JSON
-        uri_pattern = re.compile(
-            r'"portForwardingUris"\s*:\s*\[\s*"(https?://[^"]+)"'
-        )
-        match = uri_pattern.search(output)
-        if match:
-            uri = match.group(1)
-            # Convert https:// to wss:// for WebSocket
-            return uri
-
-        # Fallback: try to construct from tunnel info
-        # Pattern: https://<tunnelId>-<port>.<cluster>.devtunnels.ms/
-        # We can't reliably construct this, so try the show --json approach
-        try:
-            data = await self._run_json("show", tunnel_id)
-            for p in data.get("ports", []):
-                if p.get("portNumber") == port:
-                    uris = p.get("portForwardingUris", [])
-                    if uris:
-                        return uris[0]
-        except Exception:
-            pass
+        # JSON structure: {"tunnel": {"ports": [{"portNumber": N, "portUri": "..."}]}}
+        tunnel_data = data.get("tunnel", data)
+        for p in tunnel_data.get("ports", []):
+            pnum = p.get("portNumber", 0)
+            if pnum == port or port == 0:
+                # Prefer portUri
+                uri = p.get("portUri", "")
+                if uri:
+                    return uri
+                # Fallback to portForwardingUris
+                uris = p.get("portForwardingUris", [])
+                if uris:
+                    return uris[0]
 
         log.warning("Could not determine forwarding URI for %s:%d", tunnel_id, port)
         return ""

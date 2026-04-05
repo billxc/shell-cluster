@@ -138,7 +138,7 @@ class Daemon:
             if self._host_process.pid:
                 _child_pids.add(self._host_process.pid)
 
-            # Start discovery loop
+            # Start discovery — do first refresh before opening browser
             backend = self._get_tunnel_backend()
             self._discovery = PeerDiscovery(
                 backend=backend,
@@ -147,11 +147,14 @@ class Daemon:
                 interval=DISCOVERY_INTERVAL,
                 on_peers_changed=self._on_peers_changed,
             )
+            log.info("Discovering peers...")
+            await self._discovery.refresh()
+            await self._on_peers_changed(list(self._discovery.peers.values()))
             self._discovery_task = asyncio.create_task(self._discovery.run_loop())
         else:
             await self._server.start()
 
-        # Start dashboard server
+        # Start dashboard server (peers are already loaded)
         self._dashboard = DashboardServer(
             host="127.0.0.1",
             port=self._config.node.dashboard_port,

@@ -35,7 +35,19 @@ class DevTunnelBackend:
     async def _run_json(self, *args: str) -> dict:
         """Run a devtunnel command with --json flag and parse output."""
         output = await self._run(*args, "--json")
-        return json.loads(output)
+        output = output.strip()
+        if not output:
+            return {}
+        # devtunnel may prepend non-JSON text (welcome banner etc.)
+        # Find the first '{' or '['
+        for i, ch in enumerate(output):
+            if ch in ('{', '['):
+                try:
+                    return json.loads(output[i:])
+                except json.JSONDecodeError:
+                    pass
+        log.warning("Could not parse devtunnel JSON output: %s", output[:200])
+        return {}
 
     async def create(
         self,

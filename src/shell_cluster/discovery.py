@@ -42,8 +42,6 @@ class PeerDiscovery:
 
         seen: set[str] = set()
         for t in tunnels:
-            if t.tunnel_id == self._own_tunnel_id:
-                continue
             seen.add(t.tunnel_id)
 
             if t.tunnel_id in self._peers:

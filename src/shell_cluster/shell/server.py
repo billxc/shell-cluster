@@ -28,10 +28,11 @@ log = logging.getLogger(__name__)
 class ShellServer:
     """WebSocket server that manages shell sessions for connected clients."""
 
-    def __init__(self, shell_manager: ShellManager, node_name: str, port: int = 8765):
+    def __init__(self, shell_manager: ShellManager, node_name: str, port: int = 8765, bind_host: str = "127.0.0.1"):
         self._shell_manager = shell_manager
         self._node_name = node_name
         self._port = port
+        self._bind_host = bind_host
         self._server: websockets.asyncio.server.Server | None = None
         self._clients: set[ServerConnection] = set()
         # Track which sessions belong to which client
@@ -41,7 +42,7 @@ class ShellServer:
         """Start the WebSocket server."""
         self._server = await websockets.asyncio.server.serve(
             self._handle_client,
-            "0.0.0.0",
+            self._bind_host,
             self._port,
         )
         # Update port in case 0 was used (OS-assigned)

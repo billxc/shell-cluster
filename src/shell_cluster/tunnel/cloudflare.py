@@ -22,8 +22,10 @@ class CloudflareBackend:
     def __init__(self, domain: str = ""):
         self._domain = domain  # e.g. "shellcluster.yourdomain.com"
 
-    def set_domain(self, domain: str) -> None:
-        self._domain = domain
+    def _make_hostname(self, tunnel_id: str) -> str:
+        """Generate hostname: sc-<node-name>.<domain>"""
+        node_name = parse_node_name(tunnel_id)
+        return f"sc-{node_name}.{self._domain}"
 
     async def _run(self, *args: str, check: bool = True) -> str:
         """Run a cloudflared command and return stdout."""
@@ -74,10 +76,9 @@ class CloudflareBackend:
         """Create a tunnel and set up DNS route."""
         await self._run("tunnel", "create", tunnel_id)
 
-        # Route DNS: node-name.shellcluster.yourdomain.com → tunnel
+        # Route DNS: sc-<node-name>.<domain> → tunnel
         if self._domain:
-            node_name = parse_node_name(tunnel_id)
-            hostname = f"{node_name}.{self._domain}"
+            hostname = self._make_hostname(tunnel_id)
             try:
                 await self._run("tunnel", "route", "dns", tunnel_id, hostname)
                 log.info("DNS route: %s -> %s", hostname, tunnel_id)
@@ -150,8 +151,7 @@ class CloudflareBackend:
     async def get_forwarding_uri(self, tunnel_id: str, port: int) -> str:
         """Get the public URI for a tunnel."""
         if self._domain:
-            node_name = parse_node_name(tunnel_id)
-            return f"wss://{node_name}.{self._domain}"
+            return f"wss://{self._make_hostname(tunnel_id)}"
         return ""
 
     async def get_port_and_uri(self, tunnel_id: str) -> tuple[int, str]:
@@ -164,10 +164,9 @@ class CloudflareBackend:
         self, tunnel_id: str, remote_port: int, local_port: int = 0,
     ) -> tuple[asyncio.subprocess.Process | None, str]:
         """Connect to a peer via cloudflared access, mapping to localhost."""
-        node_name = parse_node_name(tunnel_id)
         if not self._domain:
             raise RuntimeError(f"No domain configured for tunnel {tunnel_id}")
-        hostname = f"{node_name}.{self._domain}"
+        hostname = self._make_hostname(tunnel_id)
 
         # Allocate a random local port
         if local_port == 0:

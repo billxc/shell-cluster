@@ -163,12 +163,36 @@ class CloudflareBackend:
     async def connect(
         self, tunnel_id: str, remote_port: int, local_port: int = 0,
     ) -> tuple[asyncio.subprocess.Process | None, str]:
-        """Connect to a peer. Cloudflare uses direct wss:// — no local proxy needed."""
-        uri = await self.get_forwarding_uri(tunnel_id, remote_port)
-        if not uri:
+        """Connect to a peer via cloudflared access, mapping to localhost."""
+        node_name = parse_node_name(tunnel_id)
+        if not self._domain:
             raise RuntimeError(f"No domain configured for tunnel {tunnel_id}")
-        # No process needed — browser/proxy connects directly to public URL
-        return None, uri
+        hostname = f"{node_name}.{self._domain}"
+
+        # Allocate a random local port
+        if local_port == 0:
+            import socket
+            with socket.socket() as s:
+                s.bind(("", 0))
+                local_port = s.getsockname()[1]
+
+        # cloudflared access tcp maps remote hostname to local port
+        cmd = [
+            "cloudflared", "access", "tcp",
+            "--hostname", hostname,
+            "--url", f"localhost:{local_port}",
+        ]
+        log.info("Connecting tunnel: %s", " ".join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        # Wait for connection to establish
+        await asyncio.sleep(2)
+        if proc.returncode is not None:
+            raise RuntimeError(f"cloudflared access tcp failed for {hostname}")
+        return proc, f"ws://localhost:{local_port}"
 
     async def delete(self, tunnel_id: str) -> None:
         """Delete a tunnel."""

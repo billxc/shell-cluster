@@ -590,7 +590,11 @@ function esc(s) {
 // --- Init ---
 fetchPeers();
 renderTabs();
-// Refresh peers periodically
+// Retry quickly at startup (discovery may still be running), then slow down
+setTimeout(fetchPeers, 3000);
+setTimeout(fetchPeers, 8000);
+setTimeout(fetchPeers, 15000);
+// Then refresh every 30s
 setInterval(fetchPeers, 30000);
 
 // Global resize

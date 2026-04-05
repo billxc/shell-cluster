@@ -190,6 +190,29 @@ class ShellManager:
             log.warning("Failed to write to session %s: %s (handle=%r, pid=%d)",
                         session_id, e, session._handle, session.pid)
 
+    def attach(
+        self,
+        session_id: str,
+        on_output: OnOutputCallback,
+        on_exit: OnExitCallback | None,
+    ) -> ShellSession | None:
+        """Re-attach callbacks to an existing session (for reconnect)."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return None
+
+        # Cancel old reader and start a new one with new callbacks
+        old_reader = self._readers.pop(session_id, None)
+        if old_reader:
+            old_reader.cancel()
+
+        task = asyncio.create_task(
+            self._read_loop(session, on_output, on_exit)
+        )
+        self._readers[session_id] = task
+        log.info("Re-attached to session %s", session_id)
+        return session
+
     # ── Resize (cross-platform) ─────────────────────────────────────
 
     async def resize(self, session_id: str, cols: int, rows: int) -> None:

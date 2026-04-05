@@ -251,7 +251,7 @@ function renderPeers() {
     header.onclick = () => createSession(peer);
     group.appendChild(header);
 
-    // Show existing sessions for this peer
+    // Show existing local sessions for this peer
     for (const [tabId, s] of sessions) {
       if (s.peerName === peer.name) {
         const item = document.createElement('div');
@@ -260,6 +260,18 @@ function renderPeers() {
         item.onclick = (e) => { e.stopPropagation(); switchTab(tabId); };
         group.appendChild(item);
       }
+    }
+
+    // Show remote sessions (not yet reconnected)
+    const remote = remoteSessions.get(peer.name) || [];
+    for (const rs of remote) {
+      const item = document.createElement('div');
+      item.className = 'session-item';
+      item.style.opacity = '0.6';
+      item.innerHTML = `<span class="session-icon">&#x21bb;</span> ${esc(rs.shell || 'shell')} #${rs.id.slice(0,6)}`;
+      item.title = 'Click to reconnect';
+      item.onclick = (e) => { e.stopPropagation(); createSession(peer, rs.id); };
+      group.appendChild(item);
     }
 
     list.appendChild(group);
@@ -306,8 +318,9 @@ function switchTab(tabId) {
 }
 
 // --- Session management ---
-function createSession(peer) {
+function createSession(peer, existingSessionId) {
   const tabId = `tab-${++tabCounter}`;
+  const isAttach = !!existingSessionId;
 
   // Create terminal pane
   const pane = document.createElement('div');
@@ -343,7 +356,7 @@ function createSession(peer) {
   // Connect via proxy WebSocket
   const wsUrl = `ws://${location.host}`;
   const ws = new WebSocket(wsUrl);
-  const sessionId = genId();
+  const sessionId = existingSessionId || genId();
 
   const sessionState = {
     ws, term, peerName: peer.name, sessionId, pane, fitAddon,
@@ -351,10 +364,9 @@ function createSession(peer) {
   };
   sessions.set(tabId, sessionState);
 
-  term.writeln(`\x1b[2mConnecting to ${peer.name}...\x1b[0m`);
+  term.writeln(`\x1b[2m${isAttach ? 'Reconnecting' : 'Connecting'} to ${peer.name}...\x1b[0m`);
 
   ws.onopen = () => {
-    // Send init message to proxy
     ws.send(JSON.stringify({ target: peer.uri }));
   };
 
@@ -363,31 +375,40 @@ function createSession(peer) {
 
   ws.onmessage = (event) => {
     const data = event.data;
-
-    // Try to parse as JSON protocol message
     try {
       const msg = JSON.parse(data);
 
       if (msg.type === 'peer.info') {
-        // Send shell.create
         const cols = term.cols;
         const rows = term.rows;
-        ws.send(JSON.stringify({
-          type: 'shell.create',
-          session_id: sessionId,
-          shell: '',
-          cols, rows,
-        }));
+        if (isAttach) {
+          ws.send(JSON.stringify({
+            type: 'shell.attach',
+            session_id: sessionId,
+            cols, rows,
+          }));
+        } else {
+          ws.send(JSON.stringify({
+            type: 'shell.create',
+            session_id: sessionId,
+            shell: '',
+            cols, rows,
+          }));
+        }
         initialized = true;
         return;
       }
 
-      if (msg.type === 'shell.created') {
+      if (msg.type === 'shell.created' || msg.type === 'shell.attached') {
         sessionState.shell = msg.shell || '?';
         gotCreated = true;
         renderTabs();
         renderPeers();
-        term.writeln(`\x1b[2mShell: ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
+        if (!isAttach) {
+          term.writeln(`\x1b[2mShell: ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
+        } else {
+          term.writeln(`\x1b[2mReconnected to ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
+        }
         return;
       }
 
@@ -495,7 +516,52 @@ function closeSession(tabId) {
 }
 
 function refreshPeers() {
-  // For now just re-render. In tunnel mode, would re-query discovery.
+  // Query each peer for existing sessions
+  for (const peer of PEERS) {
+    queryPeerSessions(peer);
+  }
+}
+
+// Track remote sessions per peer (not yet connected locally)
+const remoteSessions = new Map(); // peer.name -> [{id, shell}]
+
+async function queryPeerSessions(peer) {
+  try {
+    const ws = new WebSocket(`ws://${location.host}`);
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+      setTimeout(reject, 3000);
+    });
+    ws.send(JSON.stringify({ target: peer.uri }));
+
+    const peerInfo = await new Promise((resolve, reject) => {
+      ws.onmessage = (e) => resolve(JSON.parse(e.data));
+      setTimeout(reject, 3000);
+    });
+
+    // Request session list
+    ws.send(JSON.stringify({ type: 'shell.list' }));
+    const listResp = await new Promise((resolve, reject) => {
+      ws.onmessage = (e) => resolve(JSON.parse(e.data));
+      setTimeout(reject, 3000);
+    });
+
+    ws.close();
+
+    if (listResp.type === 'shell.list.response' && listResp.sessions) {
+      // Filter out sessions we're already connected to
+      const connectedIds = new Set();
+      for (const [, s] of sessions) {
+        if (s.peerName === peer.name) connectedIds.add(s.sessionId);
+      }
+      const remote = listResp.sessions.filter(s => !connectedIds.has(s.id));
+      remoteSessions.set(peer.name, remote);
+    }
+  } catch (e) {
+    // Peer unreachable
+    remoteSessions.set(peer.name, []);
+  }
   renderPeers();
 }
 
@@ -513,6 +579,8 @@ function esc(s) {
 // --- Init ---
 renderPeers();
 renderTabs();
+// Query existing sessions on load
+refreshPeers();
 
 // Global resize
 window.addEventListener('resize', () => {

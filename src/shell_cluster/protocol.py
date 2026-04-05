@@ -19,6 +19,8 @@ class MsgType:
     # Shell lifecycle
     SHELL_CREATE = "shell.create"
     SHELL_CREATED = "shell.created"
+    SHELL_ATTACH = "shell.attach"
+    SHELL_ATTACHED = "shell.attached"
     SHELL_DATA = "shell.data"
     SHELL_RESIZE = "shell.resize"
     SHELL_CLOSE = "shell.close"
@@ -102,6 +104,14 @@ def make_shell_created(session_id: str, shell: str) -> Message:
 
 def make_shell_closed(session_id: str) -> Message:
     return Message(type=MsgType.SHELL_CLOSED, session_id=session_id)
+
+
+def make_shell_attach(session_id: str, cols: int = 80, rows: int = 24) -> Message:
+    return Message(type=MsgType.SHELL_ATTACH, session_id=session_id, cols=cols, rows=rows)
+
+
+def make_shell_attached(session_id: str, shell: str) -> Message:
+    return Message(type=MsgType.SHELL_ATTACHED, session_id=session_id, shell=shell)
 
 
 def make_peer_info(name: str, sessions: list[dict[str, Any]]) -> Message:

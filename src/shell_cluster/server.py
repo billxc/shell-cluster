@@ -14,6 +14,7 @@ from shell_cluster.protocol import (
     decode_shell_data,
     make_error,
     make_peer_info,
+    make_shell_attached,
     make_shell_closed,
     make_shell_created,
     make_shell_data,
@@ -82,11 +83,8 @@ class ShellServer:
         except websockets.ConnectionClosed:
             pass
         finally:
-            # Clean up sessions owned by this client
-            session_ids = self._client_sessions.pop(ws, set())
-            for sid in session_ids:
-                await self._shell_manager.close(sid)
-                log.info("Cleaned up session %s (client disconnected)", sid)
+            # Don't auto-close sessions on disconnect — they persist for reconnect
+            self._client_sessions.pop(ws, None)
             self._clients.discard(ws)
             log.info("Client disconnected")
 
@@ -94,6 +92,7 @@ class ShellServer:
         """Dispatch a received message to the appropriate handler."""
         handlers = {
             MsgType.SHELL_CREATE: self._handle_create,
+            MsgType.SHELL_ATTACH: self._handle_attach,
             MsgType.SHELL_DATA: self._handle_data,
             MsgType.SHELL_RESIZE: self._handle_resize,
             MsgType.SHELL_CLOSE: self._handle_close,
@@ -138,6 +137,28 @@ class ShellServer:
         """Forward input data to a shell session."""
         data = decode_shell_data(msg)
         await self._shell_manager.write(msg.session_id, data)
+
+    async def _handle_attach(self, ws: ServerConnection, msg: Message) -> None:
+        """Re-attach to an existing shell session."""
+
+        async def on_output(session_id: str, data: bytes) -> None:
+            out_msg = make_shell_data(session_id, data)
+            await self._send_to_client(ws, out_msg)
+
+        async def on_exit(session_id: str) -> None:
+            closed_msg = make_shell_closed(session_id)
+            await self._send_to_client(ws, closed_msg)
+
+        session = self._shell_manager.attach(msg.session_id, on_output, on_exit)
+        if session:
+            if ws in self._client_sessions:
+                self._client_sessions[ws].add(session.session_id)
+            if msg.cols and msg.rows:
+                await self._shell_manager.resize(msg.session_id, msg.cols, msg.rows)
+            resp = make_shell_attached(session.session_id, session.shell)
+            await ws.send(resp.to_json())
+        else:
+            await ws.send(make_error(f"Session {msg.session_id} not found", msg.session_id).to_json())
 
     async def _handle_resize(self, ws: ServerConnection, msg: Message) -> None:
         """Resize a shell session."""

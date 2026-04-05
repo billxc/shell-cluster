@@ -224,13 +224,24 @@ body {
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
-// Peers injected by server
-const PEERS = __PEERS_CONFIG__;
+// Peers fetched from API
+let PEERS = [];
 
 // State
-const sessions = new Map(); // tabId -> { ws, term, peerName, sessionId, pane }
+const sessions = new Map();
 let activeTab = null;
 let tabCounter = 0;
+
+// --- Fetch peers from daemon ---
+async function fetchPeers() {
+  try {
+    const resp = await fetch('/api/peers');
+    PEERS = await resp.json();
+  } catch (e) {
+    console.warn('Failed to fetch peers:', e);
+  }
+  renderPeers();
+}
 
 // --- Peer list ---
 function renderPeers() {
@@ -577,10 +588,10 @@ function esc(s) {
 }
 
 // --- Init ---
-renderPeers();
+fetchPeers();
 renderTabs();
-// Query existing sessions on load
-refreshPeers();
+// Refresh peers periodically
+setInterval(fetchPeers, 30000);
 
 // Global resize
 window.addEventListener('resize', () => {

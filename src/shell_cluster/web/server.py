@@ -1,7 +1,7 @@
 """HTTP + WebSocket proxy server for the web dashboard.
 
-Serves static HTML and proxies WebSocket connections to remote peers,
-avoiding browser CORS/mixed-content issues.
+Serves static HTML, provides /api/peers endpoint, and proxies
+WebSocket connections to peer shell servers via localhost.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import json
 import logging
 import webbrowser
 from pathlib import Path
+from typing import Callable
 
 from websockets.asyncio.server import ServerConnection
 import websockets
@@ -20,46 +21,48 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-async def _handle_http(ws: ServerConnection) -> None:
-    """Handle HTTP requests for static files (upgrade-less connections)."""
-    pass  # websockets library handles upgrade; we use process_request
-
-
-def _build_index_html(peers: list[dict]) -> str:
-    """Inject peer config into the HTML template."""
-    html_path = STATIC_DIR / "index.html"
-    html = html_path.read_text(encoding="utf-8")
-    peers_json = json.dumps(peers)
-    return html.replace("__PEERS_CONFIG__", peers_json)
-
-
 class DashboardServer:
     """Serves the web dashboard and proxies WebSocket connections to peers."""
 
     def __init__(
         self,
-        peers: list[dict],
         host: str = "127.0.0.1",
         port: int = 9000,
         no_open: bool = False,
+        get_peers: Callable[[], list[dict]] | None = None,
     ):
-        self._peers = peers  # [{"name": "x", "uri": "ws://..."}]
         self._host = host
         self._port = port
         self._no_open = no_open
+        self._get_peers = get_peers or (lambda: [])
         self._server = None
+        self._index_html: str | None = None
+
+    def _build_index_html(self) -> str:
+        """Build index.html (peers loaded via /api/peers, not injected)."""
+        if self._index_html is None:
+            html_path = STATIC_DIR / "index.html"
+            self._index_html = html_path.read_text(encoding="utf-8")
+        return self._index_html
 
     async def start(self) -> None:
         """Start the dashboard server."""
-        index_html = _build_index_html(self._peers)
+        index_html = self._build_index_html()
+        get_peers = self._get_peers
 
         async def process_request(connection, request):
-            """Serve static files for non-WebSocket requests."""
-            # Let WebSocket upgrades pass through
+            """Serve static files and API for non-WebSocket requests."""
             if request.headers.get("Upgrade", "").lower() == "websocket":
                 return None
 
             path = request.path
+
+            # API: return current peer list
+            if path == "/api/peers":
+                peers_json = json.dumps(get_peers())
+                response = connection.respond(200, peers_json)
+                response.headers["Content-Type"] = "application/json"
+                return response
 
             if path == "/" or path == "/index.html":
                 response = connection.respond(200, index_html)
@@ -69,7 +72,6 @@ class DashboardServer:
             # Serve other static files
             safe_path = path.lstrip("/")
             file_path = STATIC_DIR / safe_path
-            # Prevent path traversal
             try:
                 file_path = file_path.resolve()
                 if not str(file_path).startswith(str(STATIC_DIR.resolve())):
@@ -88,7 +90,6 @@ class DashboardServer:
 
         async def handle_ws(ws: ServerConnection) -> None:
             """Proxy WebSocket: browser <-> peer shell server."""
-            # The browser sends the first message with target peer URI
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=5)
                 init = json.loads(raw)
@@ -104,7 +105,6 @@ class DashboardServer:
 
             try:
                 async with websockets.connect(target_uri) as peer_ws:
-                    # Bidirectional proxy
                     async def browser_to_peer():
                         try:
                             async for msg in ws:
@@ -147,20 +147,6 @@ class DashboardServer:
 
         if not self._no_open:
             webbrowser.open(url)
-
-    async def run_forever(self) -> None:
-        """Start and run until interrupted."""
-        await self.start()
-        stop = asyncio.Event()
-
-        import signal
-        import sys
-        if sys.platform != "win32":
-            loop = asyncio.get_event_loop()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, stop.set)
-
-        await stop.wait()
 
     async def stop(self) -> None:
         if self._server:

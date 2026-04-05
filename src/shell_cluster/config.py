@@ -21,18 +21,13 @@ class NodeConfig:
     name: str = field(default_factory=socket.gethostname)  # Node name, shown in peers/dashboard
     label: str = "shellcluster"  # Tunnel label for peer discovery (same label = same cluster)
     port: int = 8765  # WebSocket port for local mode (--no-tunnel); tunnel mode uses random port
+    dashboard_port: int = 9000  # Dashboard HTTP server port
 
 
 @dataclass
 class TunnelConfig:
     backend: str = "devtunnel"  # Tunnel backend: "devtunnel" (more backends planned)
     expiration: str = "8h"  # Tunnel expiration time (cloud auto-cleanup)
-
-
-@dataclass
-class DiscoveryConfig:
-    interval_seconds: int = 30  # How often daemon refreshes peer list (seconds)
-    manual_peers: list[str] = field(default_factory=list)  # Reserved, not used yet
 
 
 @dataclass
@@ -51,7 +46,6 @@ class ShellConfig:
 class Config:
     node: NodeConfig = field(default_factory=NodeConfig)
     tunnel: TunnelConfig = field(default_factory=TunnelConfig)
-    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     shell: ShellConfig = field(default_factory=ShellConfig)
     peers: list[PeerConfig] = field(default_factory=list)
 
@@ -87,10 +81,6 @@ def load_config() -> Config:
         for k, v in data["tunnel"].items():
             if hasattr(config.tunnel, k):
                 setattr(config.tunnel, k, v)
-    if "discovery" in data:
-        for k, v in data["discovery"].items():
-            if hasattr(config.discovery, k):
-                setattr(config.discovery, k, v)
     if "shell" in data:
         for k, v in data["shell"].items():
             if hasattr(config.shell, k):
@@ -111,7 +101,6 @@ def save_config(config: Config) -> None:
     data = {
         "node": asdict(config.node),
         "tunnel": asdict(config.tunnel),
-        "discovery": asdict(config.discovery),
         "shell": asdict(config.shell),
     }
     if config.peers:

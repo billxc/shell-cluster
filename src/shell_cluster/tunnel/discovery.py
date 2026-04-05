@@ -5,10 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from typing import Awaitable, Callable
+
 from shell_cluster.models import Peer, PeerStatus
 from shell_cluster.tunnel.base import TunnelBackend, parse_node_name
 
 log = logging.getLogger(__name__)
+
+OnPeersChanged = Callable[[list[Peer]], Awaitable[None]]
 
 
 class PeerDiscovery:
@@ -20,11 +24,13 @@ class PeerDiscovery:
         label: str,
         own_tunnel_id: str,
         interval: int = 30,
+        on_peers_changed: OnPeersChanged | None = None,
     ):
         self._backend = backend
         self._label = label
         self._own_tunnel_id = own_tunnel_id
         self._interval = interval
+        self._on_peers_changed = on_peers_changed
         self._peers: dict[str, Peer] = {}
         self._running = False
 
@@ -70,16 +76,13 @@ class PeerDiscovery:
 
         return list(self._peers.values())
 
-    async def run_loop(
-        self,
-        on_update: asyncio.Event | None = None,
-    ) -> None:
-        """Run discovery in a loop."""
+    async def run_loop(self) -> None:
+        """Run discovery in a loop, calling on_peers_changed when list changes."""
         self._running = True
         while self._running:
-            await self.refresh()
-            if on_update:
-                on_update.set()
+            peers = await self.refresh()
+            if self._on_peers_changed:
+                await self._on_peers_changed(peers)
             await asyncio.sleep(self._interval)
 
     def stop(self) -> None:

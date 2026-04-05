@@ -23,21 +23,6 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def _make_discovery(config: Config):
-    """Create a PeerDiscovery instance from config."""
-    from shell_cluster.tunnel.discovery import PeerDiscovery
-    from shell_cluster.tunnel.base import get_tunnel_backend, make_tunnel_id
-
-    backend = get_tunnel_backend(config.tunnel.backend)
-    tunnel_id = make_tunnel_id(config.node.name)
-    return PeerDiscovery(
-        backend=backend,
-        label=config.node.label,
-        own_tunnel_id=tunnel_id,
-        interval=config.discovery.interval_seconds,
-    )
-
-
 def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
     if not value or ctx.resilient_parsing:
         return
@@ -108,9 +93,10 @@ def unregister() -> None:
 @main.command()
 @click.option("--no-tunnel", is_flag=True, help="Local mode: no tunnel, direct WebSocket")
 @click.option("--name", default=None, help="Override node name")
-@click.option("--port", default=None, type=int, help="Override port")
-def start(no_tunnel: bool, name: str | None, port: int | None) -> None:
-    """Start the daemon (tunnel + shell server + discovery)."""
+@click.option("--port", default=None, type=int, help="Override shell server port")
+@click.option("--no-open", is_flag=True, help="Don't auto-open browser")
+def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool) -> None:
+    """Start the daemon (tunnel + shell server + discovery + dashboard)."""
     from shell_cluster.daemon import Daemon
 
     config = load_config()
@@ -120,17 +106,10 @@ def start(no_tunnel: bool, name: str | None, port: int | None) -> None:
         config.node.port = port
 
     mode = "local" if no_tunnel else "tunnel"
-    if no_tunnel:
-        console.print(
-            f"Starting daemon for [bold]{config.node.name}[/bold] "
-            f"(mode={mode}, port={config.node.port})..."
-        )
-    else:
-        console.print(
-            f"Starting daemon for [bold]{config.node.name}[/bold] "
-            f"(mode={mode})..."
-        )
-    daemon = Daemon(config, no_tunnel=no_tunnel)
+    console.print(
+        f"Starting daemon for [bold]{config.node.name}[/bold] (mode={mode})..."
+    )
+    daemon = Daemon(config, no_tunnel=no_tunnel, no_open=no_open)
     try:
         asyncio.run(daemon.run_forever())
     except KeyboardInterrupt:
@@ -140,8 +119,17 @@ def start(no_tunnel: bool, name: str | None, port: int | None) -> None:
 @main.command()
 def peers() -> None:
     """List discovered peers."""
+    from shell_cluster.tunnel.discovery import PeerDiscovery
+    from shell_cluster.tunnel.base import get_tunnel_backend, make_tunnel_id
+
     config = load_config()
-    discovery = _make_discovery(config)
+    backend = get_tunnel_backend(config.tunnel.backend)
+    tunnel_id = make_tunnel_id(config.node.name)
+    discovery = PeerDiscovery(
+        backend=backend,
+        label=config.node.label,
+        own_tunnel_id=tunnel_id,
+    )
 
     async def _list() -> None:
         peer_list = await discovery.refresh()
@@ -167,91 +155,17 @@ def peers() -> None:
 
 
 @main.command()
-@click.option("--port", "dash_port", default=9000, help="Dashboard HTTP port")
-@click.option("--no-open", is_flag=True, help="Don't auto-open browser")
-def dashboard(dash_port: int, no_open: bool) -> None:
-    """Open the web dashboard in your browser.
+def dashboard() -> None:
+    """Open the dashboard in your browser.
 
-    Combines peers from config.toml and devtunnel auto-discovery.
-
-    Add manual peers in config.toml:
-
-        [[peers]]
-        name = "macbook"
-        uri = "ws://192.168.1.10:8765"
+    The dashboard is served by the running daemon.
+    Make sure 'shellcluster start' is running first.
     """
-    from shell_cluster.web.server import DashboardServer
-
+    import webbrowser
     config = load_config()
-
-    peer_list: list[dict] = []
-    seen_names: set[str] = set()
-    tunnel_procs: list = []
-
-    # 1. Read manual peers from config (direct ws:// connections)
-    for p in config.peers:
-        uri = p.uri
-        if not uri.startswith("ws://") and not uri.startswith("wss://"):
-            uri = f"ws://{uri}"
-        name = p.name or uri.replace("ws://", "").replace("wss://", "").replace(":", "-")
-        peer_list.append({"name": name, "uri": uri, "status": "online"})
-        seen_names.add(name)
-
-    # 2. Discover tunnel peers and map to local ports
-    discovery = _make_discovery(config)
-
-    async def _setup_tunnel_peers():
-        from shell_cluster.tunnel.base import get_tunnel_backend
-        backend = get_tunnel_backend(config.tunnel.backend)
-        try:
-            console.print("[dim]Discovering peers...[/dim]")
-            discovered = await discovery.refresh()
-            for p in discovered:
-                if p.name in seen_names or not p.port:
-                    continue
-                try:
-                    proc, local_port = await backend.connect(p.tunnel_id, p.port)
-                    tunnel_procs.append(proc)
-                    peer_list.append({
-                        "name": p.name,
-                        "uri": f"ws://localhost:{local_port}",
-                        "status": p.status.value,
-                    })
-                    seen_names.add(p.name)
-                    console.print(f"  {p.name} -> localhost:{local_port}")
-                except Exception as e:
-                    console.print(f"  [dim]{p.name}: tunnel connect failed ({e})[/dim]")
-        except Exception as e:
-            console.print(f"[dim]Discovery skipped: {e}[/dim]")
-
-    try:
-        asyncio.run(_setup_tunnel_peers())
-    except Exception:
-        pass
-
-    if not peer_list:
-        console.print("[yellow]No peers found.[/yellow]")
-        console.print("Add peers to config.toml:")
-        console.print("  [[peers]]")
-        console.print('  name = "my-pc"')
-        console.print('  uri = "ws://192.168.1.10:8765"')
-        return
-
-    console.print(f"Starting dashboard on [bold]http://127.0.0.1:{dash_port}[/bold]")
-    for p in peer_list:
-        console.print(f"  Peer: {p['name']} -> {p['uri']}")
-
-    server = DashboardServer(peer_list, port=dash_port, no_open=no_open)
-    try:
-        asyncio.run(server.run_forever())
-    except KeyboardInterrupt:
-        pass
-    finally:
-        for proc in tunnel_procs:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+    url = f"http://127.0.0.1:{config.node.dashboard_port}"
+    console.print(f"Opening [bold]{url}[/bold]...")
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":

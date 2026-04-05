@@ -187,8 +187,6 @@ class Daemon:
                 continue
             if peer.name in connected_names:
                 continue
-            if not peer.port:
-                continue
             try:
                 proc, ws_uri = await backend.connect(peer.tunnel_id, peer.port)
                 if proc:

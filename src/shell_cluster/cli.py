@@ -77,6 +77,35 @@ def register(name: str, port: int, label: str, backend: str) -> None:
 
 
 @main.command()
+def unregister() -> None:
+    """Unregister this machine: delete tunnel and remove config."""
+    from shell_cluster.config import CONFIG_FILE
+    from shell_cluster.tunnel.base import get_tunnel_backend, make_tunnel_id
+
+    config = load_config()
+    tunnel_id = make_tunnel_id(config.node.name)
+
+    # Delete tunnel
+    async def _delete():
+        backend = get_tunnel_backend(config.tunnel.backend)
+        console.print(f"Deleting tunnel [bold]{tunnel_id}[/bold]...")
+        await backend.delete(tunnel_id)
+
+    try:
+        asyncio.run(_delete())
+        console.print("[green]Tunnel deleted.[/green]")
+    except Exception as e:
+        console.print(f"[dim]Tunnel deletion skipped: {e}[/dim]")
+
+    # Remove config file
+    if CONFIG_FILE.exists():
+        CONFIG_FILE.unlink()
+        console.print(f"[green]Config removed: {CONFIG_FILE}[/green]")
+
+    console.print("Done. Node unregistered.")
+
+
+@main.command()
 @click.option("--no-tunnel", is_flag=True, help="Local mode: no tunnel, direct WebSocket")
 @click.option("--name", default=None, help="Override node name")
 @click.option("--port", default=None, type=int, help="Override port")

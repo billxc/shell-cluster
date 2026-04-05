@@ -45,77 +45,36 @@ uv tool install git+https://github.com/billxc/shell-cluster
 
 macOS、Windows、Linux 使用相同的安装命令。
 
-## 快速开始（本地模式）
+## 快速开始
 
-不需要 tunnel，适合局域网或本机测试。
-
-### 1. 启动 daemon
+### 1. 安装
 
 ```bash
-# 终端 1（比如你的 Mac）
-shellcluster start --no-tunnel --name macbook --port 8765
-
-# 终端 2（比如你的 Windows PC）
-shellcluster start --no-tunnel --name windows-pc --port 8766
+uv tool install git+https://github.com/billxc/shell-cluster
 ```
 
-### 2. Web Dashboard
-
-在配置文件中添加 peers（`shellcluster register` 会创建配置文件）：
-
-```toml
-[[peers]]
-name = "macbook"
-uri = "ws://192.168.1.10:8765"
-
-[[peers]]
-name = "windows-pc"
-uri = "ws://192.168.1.20:8766"
-```
-
-然后：
-
-```bash
-shellcluster dashboard
-```
-
-自动打开浏览器 —— 左侧显示所有节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。
-
-节点来源于**两个渠道**：配置文件 + devtunnel 自动发现，两者叠加。
-
-## Tunnel 模式（跨网络）
-
-适合不同网络的机器互连。目前支持 MS Dev Tunnel。
-
-### 前置条件
-
-在每台机器上安装 [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started)（支持 macOS、Windows、Linux），用 **同一个微软账号** 登录：
+### 2. 登录 Dev Tunnel（每台机器一次）
 
 ```bash
 devtunnel user login
 ```
 
-### 使用
+所有机器使用 **同一个微软账号**。
+
+### 3. 注册并启动（每台机器）
 
 ```bash
-# 在每台机器上：注册并启动
 shellcluster register --name my-macbook
 shellcluster start
 ```
 
-这会自动：
-- 创建一个带 `shellcluster` 标签的 Dev Tunnel
-- 启动本地 WebSocket Shell 服务
-- 通过 tunnel 暴露端口
-- 发现同账号下的其他节点
+### 4. 打开 Dashboard（任意机器）
 
 ```bash
-# 查看节点
-shellcluster peers
-
-# 打开 dashboard
 shellcluster dashboard
 ```
+
+自动打开浏览器 —— 左侧显示所有发现的节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。
 
 ## 为什么去中心化？
 
@@ -133,11 +92,10 @@ shellcluster dashboard
 | 命令 | 说明 |
 |------|------|
 | `shellcluster register` | 注册当前机器到 cluster |
+| `shellcluster unregister` | 从 cluster 移除当前机器 |
 | `shellcluster start` | 启动 daemon（tunnel + shell server + discovery） |
-| `shellcluster start --no-tunnel` | 本地模式，不创建 tunnel |
-| `shellcluster start --name X --port N` | 覆盖节点名和端口 |
 | `shellcluster peers` | 列出已发现的节点 |
-| `shellcluster dashboard` | 打开 Web 管理面板（配置 peers + devtunnel 发现） |
+| `shellcluster dashboard` | 打开 Web 管理面板 |
 | `-v` / `--verbose` | 开启调试日志 |
 
 ## 配置文件
@@ -179,13 +137,7 @@ command = ""               # 默认 shell，留空则自动检测（Unix: $SHELL
 git clone git@github.com:billxc/shell-cluster.git
 cd shell-cluster
 uv sync
-
-# 本地测试：开两个终端
-uv run shellcluster start --no-tunnel --name node-a --port 8765
-uv run shellcluster start --no-tunnel --name node-b --port 8766
-
-# 第三个终端连接
-uv run shellcluster connect ws://localhost:8765
+uv run shellcluster start --no-tunnel --name test --port 8765
 ```
 
 ## Roadmap

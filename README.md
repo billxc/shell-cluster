@@ -45,77 +45,36 @@ uv tool install git+https://github.com/billxc/shell-cluster
 
 Works on macOS, Windows, and Linux with the same command.
 
-## Quick Start (Local Mode)
+## Quick Start
 
-No tunnel needed. Works over LAN or localhost for testing.
-
-### 1. Start daemons
+### 1. Install
 
 ```bash
-# Terminal 1 (e.g., your Mac)
-shellcluster start --no-tunnel --name macbook --port 8765
-
-# Terminal 2 (e.g., your Windows PC)
-shellcluster start --no-tunnel --name windows-pc --port 8766
+uv tool install git+https://github.com/billxc/shell-cluster
 ```
 
-### 2. Web Dashboard
-
-Add peers to your config file (`shellcluster register` creates it):
-
-```toml
-[[peers]]
-name = "macbook"
-uri = "ws://192.168.1.10:8765"
-
-[[peers]]
-name = "windows-pc"
-uri = "ws://192.168.1.20:8766"
-```
-
-Then:
-
-```bash
-shellcluster dashboard
-```
-
-Opens your browser with a terminal dashboard -- left sidebar shows all peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
-
-Peers come from **both** sources: config file + devtunnel auto-discovery.
-
-## Tunnel Mode (Across Networks)
-
-For machines on different networks. Currently supports MS Dev Tunnel.
-
-### Prerequisites
-
-Install [Dev Tunnel CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started) on each machine (available for macOS, Windows, and Linux) and log in with the **same Microsoft account**:
+### 2. Login to Dev Tunnel (once per machine)
 
 ```bash
 devtunnel user login
 ```
 
-### Usage
+Use the **same Microsoft account** on all machines.
+
+### 3. Register & Start (each machine)
 
 ```bash
-# On each machine: register and start
 shellcluster register --name my-macbook
 shellcluster start
 ```
 
-This automatically:
-- Creates a Dev Tunnel tagged `shellcluster`
-- Starts a local WebSocket shell server
-- Exposes it through the tunnel
-- Discovers other nodes under the same account
+### 4. Open Dashboard (any machine)
 
 ```bash
-# List peers
-shellcluster peers
-
-# Open dashboard
 shellcluster dashboard
 ```
+
+Opens your browser — left sidebar shows all discovered peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
 
 ## Why Decentralized?
 
@@ -133,11 +92,10 @@ shellcluster dashboard
 | Command | Description |
 |---------|-------------|
 | `shellcluster register` | Register this machine to the cluster |
+| `shellcluster unregister` | Remove this machine from the cluster |
 | `shellcluster start` | Start daemon (tunnel + shell server + discovery) |
-| `shellcluster start --no-tunnel` | Local mode, no tunnel |
-| `shellcluster start --name X --port N` | Override node name and port |
 | `shellcluster peers` | List discovered peers |
-| `shellcluster dashboard` | Open web dashboard (config peers + devtunnel discovery) |
+| `shellcluster dashboard` | Open web dashboard |
 | `-v` / `--verbose` | Enable debug logging |
 
 ## Configuration
@@ -179,13 +137,7 @@ See [DESIGN.md](DESIGN.md) ([中文](DESIGN_CN.md)) for architecture details.
 git clone git@github.com:billxc/shell-cluster.git
 cd shell-cluster
 uv sync
-
-# Local test with two nodes
-uv run shellcluster start --no-tunnel --name node-a --port 8765
-uv run shellcluster start --no-tunnel --name node-b --port 8766
-
-# Connect from a third terminal
-uv run shellcluster connect ws://localhost:8765
+uv run shellcluster start --no-tunnel --name test --port 8765
 ```
 
 ## Roadmap

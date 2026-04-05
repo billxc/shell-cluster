@@ -1,4 +1,4 @@
-# Shell Cluster — Design Document
+ # Shell Cluster — Design Document
 
 ## Overview
 

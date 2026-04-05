@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import socket
 
 from shell_cluster.models import TunnelInfo
 from shell_cluster.tunnel.base import TUNNEL_PREFIX, TUNNEL_SUFFIX, parse_node_name
@@ -101,10 +100,10 @@ class CloudflareBackend:
             await self.create(tunnel_id, port, label, expiration)
 
     async def host(self, tunnel_id: str, port: int) -> asyncio.subprocess.Process:
-        """Start hosting the tunnel (TCP mode)."""
+        """Start hosting the tunnel."""
         cmd = [
             "cloudflared", "tunnel", "run",
-            "--url", f"tcp://localhost:{port}",
+            "--url", f"http://localhost:{port}",
             tunnel_id,
         ]
         log.info("Starting tunnel host: %s", " ".join(cmd))
@@ -156,35 +155,15 @@ class CloudflareBackend:
     async def connect(
         self, tunnel_id: str, remote_port: int, local_port: int = 0,
     ) -> tuple[asyncio.subprocess.Process | None, str]:
-        """Connect to a peer via cloudflared access tcp, mapping to localhost."""
-        # Get tunnel UUID
+        """Connect to a peer. Uses UUID.cfargotunnel.com — no local proxy needed.
+
+        Security: UUID is not guessable and requires Cloudflare API to discover.
+        """
         uuid = await self._get_tunnel_uuid(tunnel_id)
         if not uuid:
             raise RuntimeError(f"Cannot find UUID for tunnel {tunnel_id}")
-
-        hostname = f"{uuid}.cfargotunnel.com"
-
-        # Allocate random local port
-        if local_port == 0:
-            with socket.socket() as s:
-                s.bind(("", 0))
-                local_port = s.getsockname()[1]
-
-        cmd = [
-            "cloudflared", "access", "tcp",
-            "--hostname", hostname,
-            "--url", f"localhost:{local_port}",
-        ]
-        log.info("Connecting tunnel: %s", " ".join(cmd))
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.sleep(2)
-        if proc.returncode is not None:
-            raise RuntimeError(f"cloudflared access tcp failed for {tunnel_id}")
-        return proc, f"ws://localhost:{local_port}"
+        # Connect directly via Cloudflare's internal hostname
+        return None, f"wss://{uuid}.cfargotunnel.com"
 
     async def delete(self, tunnel_id: str) -> None:
         """Delete a tunnel."""

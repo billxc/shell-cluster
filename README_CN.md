@@ -90,7 +90,7 @@ shellcluster dashboard
 
 自动打开浏览器 —— 左侧显示所有节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。
 
-Tunnel 模式下会自动发现节点，无需配置。
+节点来源于**两个渠道**：配置文件 + devtunnel 自动发现，两者叠加。
 
 ## Tunnel 模式（跨网络）
 
@@ -149,7 +149,7 @@ shellcluster connect my-desktop powershell    # 指定 shell 类型
 | `shellcluster peers` | 列出已发现的节点 |
 | `shellcluster connect <target>` | 连接到节点（名称或 `ws://host:port`） |
 | `shellcluster connect <target> <shell>` | 连接并指定 shell 类型 |
-| `shellcluster dashboard` | 打开 Web 管理面板（从配置读取或自动发现） |
+| `shellcluster dashboard` | 打开 Web 管理面板（配置 peers + devtunnel 发现） |
 | `-v` / `--verbose` | 开启调试日志 |
 
 ## 配置文件

@@ -90,7 +90,7 @@ shellcluster dashboard
 
 Opens your browser with a terminal dashboard -- left sidebar shows all peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
 
-In tunnel mode, peers are auto-discovered -- no config needed.
+Peers come from **both** sources: config file + devtunnel auto-discovery.
 
 ## Tunnel Mode (Across Networks)
 
@@ -149,7 +149,7 @@ shellcluster connect my-desktop powershell    # specify shell type
 | `shellcluster peers` | List discovered peers |
 | `shellcluster connect <target>` | Connect by name or `ws://host:port` |
 | `shellcluster connect <target> <shell>` | Connect with specific shell type |
-| `shellcluster dashboard` | Open web dashboard (peers from config or auto-discover) |
+| `shellcluster dashboard` | Open web dashboard (config peers + devtunnel discovery) |
 | `-v` / `--verbose` | Enable debug logging |
 
 ## Configuration

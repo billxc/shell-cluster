@@ -203,62 +203,62 @@ def connect(target: str, shell_type: str) -> None:
 def dashboard(dash_port: int, no_open: bool) -> None:
     """Open the web dashboard in your browser.
 
-    Peers are configured in config.toml:
+    Combines peers from config.toml and devtunnel auto-discovery.
+
+    Add manual peers in config.toml:
 
         [[peers]]
         name = "macbook"
         uri = "ws://192.168.1.10:8765"
-
-    Or auto-discovered via devtunnel if no peers are configured.
     """
     from shell_cluster.web.server import DashboardServer
 
     config = load_config()
 
-    # Read peers from config
     peer_list: list[dict] = []
+    seen_uris: set[str] = set()
+
+    # 1. Read manual peers from config
     for p in config.peers:
         uri = p.uri
         if not uri.startswith("ws://") and not uri.startswith("wss://"):
             uri = f"ws://{uri}"
         name = p.name or uri.replace("ws://", "").replace("wss://", "").replace(":", "-")
         peer_list.append({"name": name, "uri": uri, "status": "online"})
+        seen_uris.add(uri)
 
-    if not peer_list:
-        # Auto-discover via devtunnel
-        from shell_cluster.discovery import PeerDiscovery
-        from shell_cluster.tunnel.devtunnel import DevTunnelBackend
+    # 2. Always try devtunnel discovery (merge with manual peers)
+    from shell_cluster.discovery import PeerDiscovery
+    from shell_cluster.tunnel.devtunnel import DevTunnelBackend
 
-        console.print("[dim]No peers in config, discovering via devtunnel...[/dim]")
-        tunnel_id = f"shellcluster-{config.node.name}"
-        discovery = PeerDiscovery(
-            backend=DevTunnelBackend(),
-            label=config.node.label,
-            own_tunnel_id=tunnel_id,
-        )
+    tunnel_id = f"shellcluster-{config.node.name}"
+    discovery = PeerDiscovery(
+        backend=DevTunnelBackend(),
+        label=config.node.label,
+        own_tunnel_id=tunnel_id,
+    )
 
-        try:
-            discovered = asyncio.run(discovery.refresh())
-        except Exception as e:
-            console.print(f"[red]Discovery failed: {e}[/red]")
-            console.print("Add peers to config.toml or start nodes with devtunnel.")
-            return
-
+    try:
+        console.print("[dim]Discovering peers via devtunnel...[/dim]")
+        discovered = asyncio.run(discovery.refresh())
         for p in discovered:
-            if p.forwarding_uri:
+            if p.forwarding_uri and p.forwarding_uri not in seen_uris:
                 peer_list.append({
                     "name": p.name,
                     "uri": p.forwarding_uri,
                     "status": p.status.value,
                 })
+                seen_uris.add(p.forwarding_uri)
+    except Exception as e:
+        console.print(f"[dim]Devtunnel discovery skipped: {e}[/dim]")
 
-        if not peer_list:
-            console.print("[yellow]No peers found.[/yellow]")
-            console.print("Add peers to config.toml:")
-            console.print("  [[peers]]")
-            console.print('  name = "my-pc"')
-            console.print('  uri = "ws://192.168.1.10:8765"')
-            return
+    if not peer_list:
+        console.print("[yellow]No peers found.[/yellow]")
+        console.print("Add peers to config.toml:")
+        console.print("  [[peers]]")
+        console.print('  name = "my-pc"')
+        console.print('  uri = "ws://192.168.1.10:8765"')
+        return
 
     console.print(f"Starting dashboard on [bold]http://127.0.0.1:{dash_port}[/bold]")
     for p in peer_list:

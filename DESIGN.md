@@ -12,10 +12,10 @@ The user interacts through a **web dashboard** (xterm.js) that renders real term
 ┌─────────────────────────────────────────────────────────────┐
 │                        Machine A                            │
 │                                                             │
-│  ShellManager          ShellServer          DevTunnel       │
-│  ├─ PTY session 1      WebSocket :random    ├─ create       │
-│  ├─ PTY session 2      (JSON protocol)      ├─ host         │
-│  └─ PTY session N                           └─ discovery    │
+│  shell/manager         shell/server        DevTunnel        │
+│  ├─ PTY session 1      WebSocket :random   ├─ create        │
+│  ├─ PTY session 2      (JSON protocol)     ├─ host          │
+│  └─ PTY session N                          └─ discovery     │
 │                                                             │
 │  Tunnel ID: shellcluster-<name>-shellcluster                │
 └──────────────────────────┬──────────────────────────────────┘
@@ -40,39 +40,56 @@ The user interacts through a **web dashboard** (xterm.js) that renders real term
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Module Dependency Graph
+## Project Structure
 
 ```
-cli.py
-├── config.py
-├── daemon.py
-│   ├── server.py
-│   │   ├── protocol.py
-│   │   └── shell_manager.py
-│   │       └── models.py
-│   ├── discovery.py
-│   │   └── tunnel/base.py
-│   │       └── tunnel/devtunnel.py
-│   └── tunnel/base.py
-└── web/server.py
-    └── (static/index.html)
+src/shell_cluster/
+├── __init__.py          # Version info
+├── cli.py               # CLI entry point (click)
+├── config.py            # Config management (~/.config/shell-cluster/)
+├── daemon.py            # Daemon orchestrator
+├── models.py            # Data models (Peer, TunnelInfo, ShellSession)
+├── protocol.py          # WebSocket JSON protocol
+├── shell/               # ── Shell service layer ──
+│   ├── __init__.py
+│   ├── manager.py       # PTY session management (cross-platform)
+│   └── server.py        # WebSocket shell server
+├── tunnel/              # ── Tunnel transport layer ──
+│   ├── __init__.py
+│   ├── base.py          # Abstract backend + naming utilities
+│   ├── devtunnel.py     # MS Dev Tunnel implementation
+│   └── discovery.py     # Peer discovery via tunnel API
+└── web/                 # ── Web dashboard ──
+    ├── __init__.py
+    ├── server.py         # HTTP + WebSocket proxy server
+    └── static/
+        └── index.html    # xterm.js single-page dashboard
 ```
 
-**Key principle**: tunnel layer and terminal layer are completely separated. `server.py` and `shell_manager.py` know nothing about tunnels. `tunnel/` knows nothing about shells.
+### Layer separation
+
+| Layer | Modules | Knows about |
+|-------|---------|-------------|
+| **Shell** | `shell/manager.py`, `shell/server.py` | PTY, WebSocket, protocol |
+| **Tunnel** | `tunnel/base.py`, `tunnel/devtunnel.py`, `tunnel/discovery.py` | Tunnel lifecycle, peer discovery |
+| **Web** | `web/server.py`, `web/static/` | HTTP, WebSocket proxy |
+| **Orchestration** | `daemon.py`, `cli.py` | Both layers (composition root) |
+| **Shared** | `models.py`, `protocol.py`, `config.py` | Data structures only |
+
+Shell layer and tunnel layer have **zero cross-imports**.
 
 ## Components
 
-### 1. Shell Manager (`shell_manager.py`)
+### 1. Shell Manager (`shell/manager.py`)
 - **Unix**: `pty.openpty()` + `os.fork()` + `os.execvpe()`
 - **Windows**: `winpty.PtyProcess.spawn()`
 - Manages multiple concurrent PTY sessions
 - Read loop in executor thread → async callbacks for output/exit
 - `attach()`: re-bind callbacks for session reconnect after browser refresh
 
-### 2. Shell Server (`server.py`)
+### 2. Shell Server (`shell/server.py`)
 - WebSocket server (websockets library, `0.0.0.0:<port>`)
 - JSON protocol with base64-encoded terminal data
-- Tracks session ownership per client connection
 - Sessions persist across client disconnects (for reconnect)
 - Dispatches: `shell.create`, `shell.attach`, `shell.data`, `shell.resize`, `shell.close`, `shell.list`
 
@@ -111,16 +128,15 @@ Abstract `TunnelBackend` protocol with concrete `DevTunnelBackend`:
 **Tunnel ID format**: `shellcluster-<node-name>-shellcluster`
 - devtunnel appends region suffix: `shellcluster-my-mac-shellcluster.jpe1`
 - `parse_node_name()` strips prefix + suffix + region to extract node name
-- Naming prevents collision with non-shellcluster tunnels
 
 **Tunnel lifecycle**:
 - `start`: server binds random port → `ensure_tunnel()` (reuse or create) → `host()`
 - `stop`: kill host process, keep tunnel alive (has expiration)
 - Next `start`: reuse tunnel, update port if changed, host again
 
-### 5. Discovery (`discovery.py`)
+### 5. Discovery (`tunnel/discovery.py`)
 - Calls `backend.list_tunnels(label)` to find peers
-- Filters by `hostConnections > 0` (only show actively hosted tunnels)
+- Filters by `hostConnections > 0` (only actively hosted tunnels)
 - Calls `backend.get_port_and_uri()` for each new peer
 - Extracts node name from tunnel ID via `parse_node_name()`
 - Periodic refresh loop when running inside daemon
@@ -144,16 +160,18 @@ stop:
 ### 7. Web Dashboard (`web/server.py`, `web/static/index.html`)
 - Python: HTTP server (serves HTML) + WebSocket proxy
 - HTML: Single page with xterm.js, Catppuccin theme
-- Flow: browser → WS proxy (:9000) → init message with target URI → proxy connects to peer → bidirectional relay
-- Frontend queries each peer's session list on load
-- Shows remote (disconnected) sessions with reconnect icon
+- Connection: browser → WS proxy (:9000) → init message → proxy connects to peer → bidirectional relay
 - Sessions persist across browser refresh via `shell.attach`
+- Frontend queries each peer's session list on load, shows reconnectable sessions
 
 ### 8. Config (`config.py`)
 TOML config at platform-specific path:
-- macOS: `~/Library/Application Support/shell-cluster/config.toml`
-- Linux: `~/.config/shell-cluster/config.toml`
-- Windows: `%APPDATA%\shell-cluster\config.toml`
+
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/shell-cluster/config.toml` |
+| Linux | `~/.config/shell-cluster/config.toml` |
+| Windows | `%APPDATA%\shell-cluster\config.toml` |
 
 Sections: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
 
@@ -168,9 +186,9 @@ Sections: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
 | `shellcluster peers` | List discovered peers |
 | `shellcluster dashboard` | Open web dashboard |
 
-## Connection Flow (Tunnel Mode)
+## Connection Flow
 
-### Server side
+### Server side (tunnel mode)
 ```
 register → config saved
 start → server :random → ensure_tunnel → host
@@ -182,28 +200,27 @@ start → server :random → ensure_tunnel → host
 dashboard
   → discovery: list tunnels → find peers
   → for each peer: devtunnel connect → localhost:<same-port>
-  → start HTTP server :9000
-  → open browser
-  → user clicks peer → WS proxy → localhost:<mapped-port> → tunnel → peer server
+  → start HTTP server :9000 → open browser
+  → user clicks peer → WS proxy → localhost:<mapped-port> → tunnel → peer
 ```
 
 ### Session reconnect (browser refresh)
 ```
-page load → query each peer's session list via WS
+page load → query each peer's session list
          → show remote sessions in sidebar (↻ icon)
-         → user clicks → shell.attach → re-bind output callbacks
-         → terminal resumes
+         → user clicks → shell.attach → re-bind callbacks → resume
 ```
 
 ## Design Decisions
 
 1. **Random port in tunnel mode** — avoids port conflicts, tunnel layer handles mapping
-2. **`devtunnel connect` not direct wss://**  — proper tunnel layer/terminal layer separation
+2. **`devtunnel connect` not direct wss://** — proper layer separation, all WS goes through localhost
 3. **Sessions persist on disconnect** — allows browser refresh without losing state
 4. **No central server** — peers discover via shared tunnel label under same account
-5. **Web dashboard over TUI** — xterm.js has better terminal emulation than pyte, cross-platform
+5. **Web dashboard over TUI** — xterm.js provides better terminal emulation, cross-platform rendering
 6. **Tunnel reuse** — `ensure_tunnel()` avoids expensive re-creation on daemon restart
 7. **`shellcluster-<name>-shellcluster` naming** — reliable node name extraction from tunnel ID
+8. **Shell/tunnel layer separation** — zero cross-imports, ready for alternative backends
 
 ## Dependencies
 
@@ -215,8 +232,6 @@ page load → query each peer's session list via WS
 | `tomli-w` | TOML write |
 | `rich` | Pretty terminal output |
 | `pywinpty` | Windows PTY (conditional) |
-
-No `textual`, no `pyte`, no `paramiko`. Minimal dependency tree.
 
 ## Roadmap
 

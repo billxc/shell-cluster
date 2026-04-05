@@ -173,7 +173,7 @@ command = ""               # Default shell, empty = $SHELL (Unix) / %COMSPEC% (W
 
 ## Development
 
-See [DESIGN.md](DESIGN.md) for architecture details.
+See [DESIGN.md](DESIGN.md) ([中文](DESIGN_CN.md)) for architecture details.
 
 ```bash
 git clone git@github.com:billxc/shell-cluster.git

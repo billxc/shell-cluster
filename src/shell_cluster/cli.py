@@ -25,7 +25,7 @@ def setup_logging(verbose: bool) -> None:
 
 def _make_discovery(config: Config):
     """Create a PeerDiscovery instance from config."""
-    from shell_cluster.discovery import PeerDiscovery
+    from shell_cluster.tunnel.discovery import PeerDiscovery
     from shell_cluster.tunnel.base import get_tunnel_backend, make_tunnel_id
 
     backend = get_tunnel_backend(config.tunnel.backend)

@@ -10,9 +10,9 @@ import signal
 import sys
 
 from shell_cluster.config import Config
-from shell_cluster.discovery import PeerDiscovery
-from shell_cluster.server import ShellServer
-from shell_cluster.shell_manager import ShellManager
+from shell_cluster.tunnel.discovery import PeerDiscovery
+from shell_cluster.shell.server import ShellServer
+from shell_cluster.shell.manager import ShellManager
 
 log = logging.getLogger(__name__)
 

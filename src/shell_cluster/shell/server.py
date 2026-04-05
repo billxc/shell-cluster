@@ -20,7 +20,7 @@ from shell_cluster.protocol import (
     make_shell_data,
     make_shell_list_response,
 )
-from shell_cluster.shell_manager import ShellManager
+from shell_cluster.shell.manager import ShellManager
 
 log = logging.getLogger(__name__)
 

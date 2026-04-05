@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
+import os
 import signal
 import sys
 
@@ -13,6 +15,21 @@ from shell_cluster.server import ShellServer
 from shell_cluster.shell_manager import ShellManager
 
 log = logging.getLogger(__name__)
+
+# Track child PIDs globally so atexit can clean them up
+_child_pids: set[int] = set()
+
+
+def _cleanup_children() -> None:
+    """Kill any remaining child processes on exit."""
+    for pid in _child_pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
+atexit.register(_cleanup_children)
 
 
 class Daemon:
@@ -85,6 +102,8 @@ class Daemon:
             self._host_process = await backend.host(
                 self._tunnel_id, actual_port
             )
+            if self._host_process.pid:
+                _child_pids.add(self._host_process.pid)
         else:
             # Local mode: start server on configured port
             await self._server.start()
@@ -133,6 +152,8 @@ class Daemon:
             try:
                 self._host_process.kill()
                 await self._host_process.wait()
+                if self._host_process.pid:
+                    _child_pids.discard(self._host_process.pid)
             except ProcessLookupError:
                 pass
 

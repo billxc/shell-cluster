@@ -42,20 +42,17 @@ def main(verbose: bool) -> None:
 
 @main.command()
 @click.option("--name", prompt="Node name", default=None, help="Name for this machine")
-@click.option("--port", default=8765, help="Local port for shell server")
 @click.option("--label", default="shellcluster", help="Tunnel label for discovery")
 @click.option("--backend", default="devtunnel", help="Tunnel backend (devtunnel)")
-def register(name: str, port: int, label: str, backend: str) -> None:
+def register(name: str, label: str, backend: str) -> None:
     """Register this machine to the cluster."""
     config = load_config()
     if name:
         config.node.name = name
-    config.node.port = port
     config.node.label = label
     config.tunnel.backend = backend
     save_config(config)
     console.print(f"[green]Registered node '{config.node.name}'[/green]")
-    console.print(f"  Port: {config.node.port}")
     console.print(f"  Label: {config.node.label}")
     console.print(f"  Backend: {config.tunnel.backend}")
     console.print(f"\nRun [bold]shellcluster start[/bold] to start the daemon.")
@@ -93,23 +90,26 @@ def unregister() -> None:
 @main.command()
 @click.option("--no-tunnel", is_flag=True, help="Local mode: no tunnel, direct WebSocket")
 @click.option("--name", default=None, help="Override node name")
-@click.option("--port", default=None, type=int, help="Override shell server port")
+@click.option("--port", default=None, type=int, help="Shell server port (required for --no-tunnel)")
 @click.option("--no-open", is_flag=True, help="Don't auto-open browser")
 def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool) -> None:
     """Start the daemon (tunnel + shell server + discovery + dashboard)."""
     from shell_cluster.daemon import Daemon
 
+    if no_tunnel and not port:
+        console.print("[red]--port is required in local mode (--no-tunnel).[/red]")
+        console.print("Example: shellcluster start --no-tunnel --port 8765")
+        return
+
     config = load_config()
     if name:
         config.node.name = name
-    if port:
-        config.node.port = port
 
     mode = "local" if no_tunnel else "tunnel"
     console.print(
         f"Starting daemon for [bold]{config.node.name}[/bold] (mode={mode})..."
     )
-    daemon = Daemon(config, no_tunnel=no_tunnel, no_open=no_open)
+    daemon = Daemon(config, no_tunnel=no_tunnel, local_port=port, no_open=no_open)
     try:
         asyncio.run(daemon.run_forever())
     except KeyboardInterrupt:
@@ -152,6 +152,58 @@ def peers() -> None:
         console.print(table)
 
     asyncio.run(_list())
+
+
+@main.command()
+@click.argument("key", required=False)
+@click.argument("value", required=False)
+def config(key: str | None, value: str | None) -> None:
+    """Show or set config values.
+
+    \b
+    shellcluster config              # show config path and all values
+    shellcluster config node.name    # show a specific value
+    shellcluster config node.name X  # set a value
+    """
+    from shell_cluster.config import CONFIG_FILE
+
+    if key is None:
+        # Show config path + all values
+        console.print(f"[bold]Config file:[/bold] {CONFIG_FILE}")
+        if CONFIG_FILE.exists():
+            console.print()
+            console.print(CONFIG_FILE.read_text())
+        else:
+            console.print("[dim]No config file yet. Run 'shellcluster register'.[/dim]")
+        return
+
+    cfg = load_config()
+
+    # Parse key like "node.name" → section="node", field="name"
+    parts = key.split(".", 1)
+    if len(parts) != 2:
+        console.print(f"[red]Invalid key '{key}'. Use section.field (e.g. node.name)[/red]")
+        return
+    section, field = parts
+
+    section_obj = getattr(cfg, section, None)
+    if section_obj is None or not hasattr(section_obj, field):
+        console.print(f"[red]Unknown config key: {key}[/red]")
+        return
+
+    if value is None:
+        # Show value
+        console.print(f"{key} = {getattr(section_obj, field)!r}")
+    else:
+        # Set value — coerce type
+        current = getattr(section_obj, field)
+        if isinstance(current, int):
+            value = int(value)
+        elif isinstance(current, bool):
+            value = value.lower() in ("true", "1", "yes")
+        setattr(section_obj, field, value)
+        save_config(cfg)
+        console.print(f"[green]{key} = {value!r}[/green]")
 
 
 @main.command()

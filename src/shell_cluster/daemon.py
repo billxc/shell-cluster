@@ -38,7 +38,7 @@ atexit.register(_cleanup_children)
 class Daemon:
     """Main daemon that manages tunnel, shell server, discovery, and dashboard."""
 
-    def __init__(self, config: Config, no_tunnel: bool = False, no_open: bool = False):
+    def __init__(self, config: Config, no_tunnel: bool = False, local_port: int | None = None, no_open: bool = False):
         self._config = config
         self._no_tunnel = no_tunnel
         self._no_open = no_open
@@ -54,7 +54,7 @@ class Daemon:
             self._server = ShellServer(
                 self._shell_manager,
                 config.node.name,
-                config.node.port,
+                local_port or 8765,
             )
         from shell_cluster.tunnel.base import make_tunnel_id
         self._tunnel_id = make_tunnel_id(config.node.name)

@@ -20,7 +20,6 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 class NodeConfig:
     name: str = field(default_factory=socket.gethostname)  # Node name, shown in peers/dashboard
     label: str = "shellcluster"  # Tunnel label for peer discovery (same label = same cluster)
-    port: int = 8765  # WebSocket port for local mode (--no-tunnel); tunnel mode uses random port
     dashboard_port: int = 9000  # Dashboard HTTP server port
 
 

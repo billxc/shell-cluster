@@ -70,15 +70,27 @@ shellcluster connect ws://localhost:8765
 
 ### 3. Web Dashboard
 
-```bash
-# 本地模式：手动指定 peers
-shellcluster dashboard -p macbook=ws://localhost:8765 -p windows-pc=ws://localhost:8766
+在配置文件中添加 peers（`shellcluster register` 会创建配置文件）：
 
-# Tunnel 模式：自动发现 devtunnel 节点
+```toml
+[[peers]]
+name = "macbook"
+uri = "ws://192.168.1.10:8765"
+
+[[peers]]
+name = "windows-pc"
+uri = "ws://192.168.1.20:8766"
+```
+
+然后：
+
+```bash
 shellcluster dashboard
 ```
 
 自动打开浏览器 —— 左侧显示所有节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。
+
+Tunnel 模式下会自动发现节点，无需配置。
 
 ## Tunnel 模式（跨网络）
 
@@ -137,8 +149,7 @@ shellcluster connect my-desktop powershell    # 指定 shell 类型
 | `shellcluster peers` | 列出已发现的节点 |
 | `shellcluster connect <target>` | 连接到节点（名称或 `ws://host:port`） |
 | `shellcluster connect <target> <shell>` | 连接并指定 shell 类型 |
-| `shellcluster dashboard` | 打开 Web 管理面板（自动发现 devtunnel 节点） |
-| `shellcluster dashboard -p name=ws://host:port` | 打开 Web 管理面板（手动指定节点） |
+| `shellcluster dashboard` | 打开 Web 管理面板（从配置读取或自动发现） |
 | `-v` / `--verbose` | 开启调试日志 |
 
 ## 配置文件
@@ -165,6 +176,11 @@ manual_peers = []          # 手动添加的节点 tunnel ID
 
 [shell]
 command = ""               # 默认 shell，留空则自动检测（Unix: $SHELL / Windows: %COMSPEC%）
+
+# 本地/局域网模式的手动 peers（可选）
+# [[peers]]
+# name = "my-desktop"
+# uri = "ws://192.168.1.20:8765"
 ```
 
 ## 开发

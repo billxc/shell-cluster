@@ -198,30 +198,30 @@ def connect(target: str, shell_type: str) -> None:
 
 
 @main.command()
-@click.option("--peers", "-p", multiple=True, help="Peer URIs (e.g. ws://host:port or name=ws://host:port)")
 @click.option("--port", "dash_port", default=9000, help="Dashboard HTTP port")
 @click.option("--no-open", is_flag=True, help="Don't auto-open browser")
-def dashboard(peers: tuple[str, ...], dash_port: int, no_open: bool) -> None:
+def dashboard(dash_port: int, no_open: bool) -> None:
     """Open the web dashboard in your browser.
 
-    In local mode, pass peers directly:
+    Peers are configured in config.toml:
 
-        shellcluster dashboard -p node-a=ws://localhost:8765 -p node-b=ws://localhost:8766
+        [[peers]]
+        name = "macbook"
+        uri = "ws://192.168.1.10:8765"
+
+    Or auto-discovered via devtunnel if no peers are configured.
     """
     from shell_cluster.web.server import DashboardServer
 
     config = load_config()
 
-    # Parse peers
+    # Read peers from config
     peer_list: list[dict] = []
-    for p in peers:
-        if "=" in p:
-            name, uri = p.split("=", 1)
-        else:
-            name = p.replace("ws://", "").replace("wss://", "").replace(":", "-")
-            uri = p
+    for p in config.peers:
+        uri = p.uri
         if not uri.startswith("ws://") and not uri.startswith("wss://"):
             uri = f"ws://{uri}"
+        name = p.name or uri.replace("ws://", "").replace("wss://", "").replace(":", "-")
         peer_list.append({"name": name, "uri": uri, "status": "online"})
 
     if not peer_list:
@@ -229,7 +229,7 @@ def dashboard(peers: tuple[str, ...], dash_port: int, no_open: bool) -> None:
         from shell_cluster.discovery import PeerDiscovery
         from shell_cluster.tunnel.devtunnel import DevTunnelBackend
 
-        console.print("[dim]No peers specified, discovering via devtunnel...[/dim]")
+        console.print("[dim]No peers in config, discovering via devtunnel...[/dim]")
         tunnel_id = f"shellcluster-{config.node.name}"
         discovery = PeerDiscovery(
             backend=DevTunnelBackend(),
@@ -241,7 +241,7 @@ def dashboard(peers: tuple[str, ...], dash_port: int, no_open: bool) -> None:
             discovered = asyncio.run(discovery.refresh())
         except Exception as e:
             console.print(f"[red]Discovery failed: {e}[/red]")
-            console.print("Use -p to add peers manually.")
+            console.print("Add peers to config.toml or start nodes with devtunnel.")
             return
 
         for p in discovered:
@@ -253,9 +253,11 @@ def dashboard(peers: tuple[str, ...], dash_port: int, no_open: bool) -> None:
                 })
 
         if not peer_list:
-            console.print("[yellow]No peers discovered.[/yellow]")
-            console.print("Make sure other nodes are running with the same devtunnel account.")
-            console.print("Or use: shellcluster dashboard -p name=ws://host:port")
+            console.print("[yellow]No peers found.[/yellow]")
+            console.print("Add peers to config.toml:")
+            console.print("  [[peers]]")
+            console.print('  name = "my-pc"')
+            console.print('  uri = "ws://192.168.1.10:8765"')
             return
 
     console.print(f"Starting dashboard on [bold]http://127.0.0.1:{dash_port}[/bold]")

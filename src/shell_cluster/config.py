@@ -36,6 +36,13 @@ class DiscoveryConfig:
 
 
 @dataclass
+class PeerConfig:
+    """A manually configured peer."""
+    name: str = ""
+    uri: str = ""
+
+
+@dataclass
 class ShellConfig:
     command: str = ""  # empty = $SHELL or /bin/sh
 
@@ -46,6 +53,7 @@ class Config:
     tunnel: TunnelConfig = field(default_factory=TunnelConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     shell: ShellConfig = field(default_factory=ShellConfig)
+    peers: list[PeerConfig] = field(default_factory=list)
 
     def get_shell_command(self) -> str:
         if self.shell.command:
@@ -87,6 +95,13 @@ def load_config() -> Config:
         for k, v in data["shell"].items():
             if hasattr(config.shell, k):
                 setattr(config.shell, k, v)
+    if "peers" in data:
+        for p in data["peers"]:
+            if isinstance(p, dict) and "uri" in p:
+                config.peers.append(PeerConfig(
+                    name=p.get("name", ""),
+                    uri=p["uri"],
+                ))
     return config
 
 
@@ -99,5 +114,7 @@ def save_config(config: Config) -> None:
         "discovery": asdict(config.discovery),
         "shell": asdict(config.shell),
     }
+    if config.peers:
+        data["peers"] = [{"name": p.name, "uri": p.uri} for p in config.peers]
     with open(CONFIG_FILE, "wb") as f:
         tomli_w.dump(data, f)

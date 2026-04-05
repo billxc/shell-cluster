@@ -70,15 +70,27 @@ You're now in the remote shell. Type `exit` or press `~.` (tilde-dot after newli
 
 ### 3. Web Dashboard
 
-```bash
-# Local mode: specify peers manually
-shellcluster dashboard -p macbook=ws://localhost:8765 -p windows-pc=ws://localhost:8766
+Add peers to your config file (`shellcluster register` creates it):
 
-# Tunnel mode: auto-discover peers via devtunnel
+```toml
+[[peers]]
+name = "macbook"
+uri = "ws://192.168.1.10:8765"
+
+[[peers]]
+name = "windows-pc"
+uri = "ws://192.168.1.20:8766"
+```
+
+Then:
+
+```bash
 shellcluster dashboard
 ```
 
 Opens your browser with a terminal dashboard -- left sidebar shows all peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
+
+In tunnel mode, peers are auto-discovered -- no config needed.
 
 ## Tunnel Mode (Across Networks)
 
@@ -137,8 +149,7 @@ shellcluster connect my-desktop powershell    # specify shell type
 | `shellcluster peers` | List discovered peers |
 | `shellcluster connect <target>` | Connect by name or `ws://host:port` |
 | `shellcluster connect <target> <shell>` | Connect with specific shell type |
-| `shellcluster dashboard` | Open web dashboard (auto-discover via devtunnel) |
-| `shellcluster dashboard -p name=ws://host:port` | Open web dashboard with manual peers |
+| `shellcluster dashboard` | Open web dashboard (peers from config or auto-discover) |
 | `-v` / `--verbose` | Enable debug logging |
 
 ## Configuration
@@ -165,6 +176,11 @@ manual_peers = []          # Manually added tunnel IDs
 
 [shell]
 command = ""               # Default shell, empty = $SHELL (Unix) / %COMSPEC% (Windows)
+
+# Manual peers for local/LAN mode (optional)
+# [[peers]]
+# name = "my-desktop"
+# uri = "ws://192.168.1.20:8765"
 ```
 
 ## Development

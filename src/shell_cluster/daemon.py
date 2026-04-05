@@ -264,3 +264,5 @@ class Daemon:
         finally:
             if not self._stopping:
                 await self.stop()
+            # Force exit — PTY reader threads may block shutdown
+            os._exit(0)

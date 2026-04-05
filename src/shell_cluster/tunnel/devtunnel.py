@@ -69,7 +69,6 @@ class DevTunnelBackend:
             "create", tunnel_id,
             "--labels", label,
             "--expiration", expiration,
-            "--allow-anonymous",
         )
 
         await self._run("port", "create", tunnel_id, "-p", str(port))

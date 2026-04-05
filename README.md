@@ -23,7 +23,7 @@ macOS (zsh)                Windows (PowerShell)         Linux (bash)
 
 ## Platform Support
 
-| Platform | Server (daemon) | Client (connect) | Shell |
+| Platform | Server (daemon) | Client (dashboard) | Shell |
 |----------|:-:|:-:|---|
 | macOS | Yes | Yes | zsh, bash, fish, ... |
 | Windows | Yes | Yes | pwsh (PS 7+), PowerShell, cmd, Git Bash, ... |
@@ -59,16 +59,7 @@ shellcluster start --no-tunnel --name macbook --port 8765
 shellcluster start --no-tunnel --name windows-pc --port 8766
 ```
 
-### 2. Connect
-
-```bash
-# From any machine
-shellcluster connect ws://localhost:8765
-```
-
-You're now in the remote shell. Type `exit` or press `~.` (tilde-dot after newline) to disconnect.
-
-### 3. Web Dashboard
+### 2. Web Dashboard
 
 Add peers to your config file (`shellcluster register` creates it):
 
@@ -122,9 +113,8 @@ This automatically:
 # List peers
 shellcluster peers
 
-# Connect by name
-shellcluster connect my-desktop
-shellcluster connect my-desktop powershell    # specify shell type
+# Open dashboard
+shellcluster dashboard
 ```
 
 ## Why Decentralized?
@@ -147,8 +137,6 @@ shellcluster connect my-desktop powershell    # specify shell type
 | `shellcluster start --no-tunnel` | Local mode, no tunnel |
 | `shellcluster start --name X --port N` | Override node name and port |
 | `shellcluster peers` | List discovered peers |
-| `shellcluster connect <target>` | Connect by name or `ws://host:port` |
-| `shellcluster connect <target> <shell>` | Connect with specific shell type |
 | `shellcluster dashboard` | Open web dashboard (config peers + devtunnel discovery) |
 | `-v` / `--verbose` | Enable debug logging |
 

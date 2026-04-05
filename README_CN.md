@@ -23,7 +23,7 @@ macOS (zsh)                Windows (PowerShell)         Linux (bash)
 
 ## 平台支持
 
-| 平台 | 服务端 (daemon) | 客户端 (connect) | Shell |
+| 平台 | 服务端 (daemon) | 客户端 (dashboard) | Shell |
 |------|:-:|:-:|---|
 | macOS | Yes | Yes | zsh, bash, fish, ... |
 | Windows | Yes | Yes | pwsh (PS 7+), PowerShell, cmd, Git Bash, ... |
@@ -59,16 +59,7 @@ shellcluster start --no-tunnel --name macbook --port 8765
 shellcluster start --no-tunnel --name windows-pc --port 8766
 ```
 
-### 2. 连接
-
-```bash
-# 从任意机器
-shellcluster connect ws://localhost:8765
-```
-
-你现在进入了远程 shell。输入 `exit` 或按 `~.`（新行后按波浪号再按点）断开。
-
-### 3. Web Dashboard
+### 2. Web Dashboard
 
 在配置文件中添加 peers（`shellcluster register` 会创建配置文件）：
 
@@ -122,9 +113,8 @@ shellcluster start
 # 查看节点
 shellcluster peers
 
-# 通过名称连接
-shellcluster connect my-desktop
-shellcluster connect my-desktop powershell    # 指定 shell 类型
+# 打开 dashboard
+shellcluster dashboard
 ```
 
 ## 为什么去中心化？
@@ -147,8 +137,6 @@ shellcluster connect my-desktop powershell    # 指定 shell 类型
 | `shellcluster start --no-tunnel` | 本地模式，不创建 tunnel |
 | `shellcluster start --name X --port N` | 覆盖节点名和端口 |
 | `shellcluster peers` | 列出已发现的节点 |
-| `shellcluster connect <target>` | 连接到节点（名称或 `ws://host:port`） |
-| `shellcluster connect <target> <shell>` | 连接并指定 shell 类型 |
 | `shellcluster dashboard` | 打开 Web 管理面板（配置 peers + devtunnel 发现） |
 | `-v` / `--verbose` | 开启调试日志 |
 

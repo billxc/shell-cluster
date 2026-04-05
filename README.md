@@ -71,7 +71,11 @@ You're now in the remote shell. Type `exit` or press `~.` (tilde-dot after newli
 ### 3. Web Dashboard
 
 ```bash
+# Local mode: specify peers manually
 shellcluster dashboard -p macbook=ws://localhost:8765 -p windows-pc=ws://localhost:8766
+
+# Tunnel mode: auto-discover peers via devtunnel
+shellcluster dashboard
 ```
 
 Opens your browser with a terminal dashboard -- left sidebar shows all peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
@@ -133,7 +137,8 @@ shellcluster connect my-desktop powershell    # specify shell type
 | `shellcluster peers` | List discovered peers |
 | `shellcluster connect <target>` | Connect by name or `ws://host:port` |
 | `shellcluster connect <target> <shell>` | Connect with specific shell type |
-| `shellcluster dashboard -p name=ws://host:port` | Open web dashboard in browser |
+| `shellcluster dashboard` | Open web dashboard (auto-discover via devtunnel) |
+| `shellcluster dashboard -p name=ws://host:port` | Open web dashboard with manual peers |
 | `-v` / `--verbose` | Enable debug logging |
 
 ## Configuration

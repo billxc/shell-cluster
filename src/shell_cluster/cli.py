@@ -225,9 +225,38 @@ def dashboard(peers: tuple[str, ...], dash_port: int, no_open: bool) -> None:
         peer_list.append({"name": name, "uri": uri, "status": "online"})
 
     if not peer_list:
-        console.print("[yellow]No peers specified. Use -p to add peers.[/yellow]")
-        console.print("Example: shellcluster dashboard -p mypc=ws://localhost:8765")
-        return
+        # Auto-discover via devtunnel
+        from shell_cluster.discovery import PeerDiscovery
+        from shell_cluster.tunnel.devtunnel import DevTunnelBackend
+
+        console.print("[dim]No peers specified, discovering via devtunnel...[/dim]")
+        tunnel_id = f"shellcluster-{config.node.name}"
+        discovery = PeerDiscovery(
+            backend=DevTunnelBackend(),
+            label=config.node.label,
+            own_tunnel_id=tunnel_id,
+        )
+
+        try:
+            discovered = asyncio.run(discovery.refresh())
+        except Exception as e:
+            console.print(f"[red]Discovery failed: {e}[/red]")
+            console.print("Use -p to add peers manually.")
+            return
+
+        for p in discovered:
+            if p.forwarding_uri:
+                peer_list.append({
+                    "name": p.name,
+                    "uri": p.forwarding_uri,
+                    "status": p.status.value,
+                })
+
+        if not peer_list:
+            console.print("[yellow]No peers discovered.[/yellow]")
+            console.print("Make sure other nodes are running with the same devtunnel account.")
+            console.print("Or use: shellcluster dashboard -p name=ws://host:port")
+            return
 
     console.print(f"Starting dashboard on [bold]http://127.0.0.1:{dash_port}[/bold]")
     for p in peer_list:

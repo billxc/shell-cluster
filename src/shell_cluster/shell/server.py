@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 
 import websockets
 from websockets.asyncio.server import ServerConnection
@@ -24,6 +25,19 @@ from shell_cluster.protocol import (
 from shell_cluster.shell.manager import ShellManager
 
 log = logging.getLogger(__name__)
+
+# Terminal query sequences that trigger a response from xterm.js.
+# If replayed, the response goes back to the shell as garbage input.
+# ESC[c / ESC[0c — Primary DA    ESC[>c / ESC[>0c — Secondary DA
+# ESC[=c — Tertiary DA            ESC[6n / ESC[?6n — Cursor position query
+_TERMINAL_QUERY_RE = re.compile(
+    rb"\x1b\[[>?=]?[0-9]*[cn]"
+)
+
+
+def _strip_terminal_queries(data: bytes) -> bytes:
+    """Remove terminal query sequences that would cause echo on replay."""
+    return _TERMINAL_QUERY_RE.sub(b"", data)
 
 
 class ShellServer:
@@ -187,6 +201,7 @@ class ShellServer:
             # Replay scrollback buffer so client sees previous output
             scrollback = session.get_scrollback()
             if scrollback:
+                scrollback = _strip_terminal_queries(scrollback)
                 replay_msg = make_shell_data(session.session_id, scrollback)
                 await ws.send(replay_msg.to_json())
         else:

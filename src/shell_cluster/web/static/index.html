@@ -639,12 +639,8 @@ function createSession(peer, existingSessionId) {
         gotCreated = true;
         renderTabs();
         renderPeers();
-        if (isAttach) {
-          // Clear the "Reconnecting..." text so scrollback replays cleanly
-          term.clear();
-        } else {
-          term.writeln(`\x1b[2mShell: ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
-        }
+        // Clear the "Connecting/Reconnecting..." text so terminal starts clean
+        term.clear();
         return;
       }
 

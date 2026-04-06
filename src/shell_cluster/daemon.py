@@ -254,7 +254,11 @@ class Daemon:
             log.info("Disconnected peer %s", name)
 
     async def _health_check_loop(self) -> None:
-        """Periodically ping each peer's HTTP /sessions endpoint to check liveness."""
+        """Periodically ping each peer's HTTP /sessions endpoint to check liveness.
+
+        When a peer becomes unreachable, kill its devtunnel connect process so
+        that the next refresh will re-establish the connection.
+        """
         loop = asyncio.get_event_loop()
         while not self._stopping:
             peers_snapshot = dict(self._peer_uris)
@@ -265,9 +269,25 @@ class Daemon:
                         loop.run_in_executor(None, self._ping_peer, http_url),
                         timeout=3.0,
                     )
-                    self._peer_status[name] = "online" if alive else "offline"
                 except (asyncio.TimeoutError, Exception):
-                    self._peer_status[name] = "offline"
+                    alive = False
+
+                old_status = self._peer_status.get(name, "online")
+                self._peer_status[name] = "online" if alive else "offline"
+
+                # Peer went offline — kill stale connect process so refresh reconnects
+                if not alive and old_status == "online":
+                    log.info("Peer %s unreachable, killing stale connect process", name)
+                    proc = self._tunnel_connect_procs.pop(name, None)
+                    if proc:
+                        try:
+                            proc.kill()
+                            if proc.pid:
+                                _child_pids.discard(proc.pid)
+                        except ProcessLookupError:
+                            pass
+                    self._peer_uris.pop(name, None)
+
             await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
     @staticmethod

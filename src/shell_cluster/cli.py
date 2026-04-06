@@ -21,6 +21,9 @@ def setup_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # websockets logs every HTTP request as "connection rejected" at INFO — too noisy
+    if not verbose:
+        logging.getLogger("websockets").setLevel(logging.WARNING)
 
 
 def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:

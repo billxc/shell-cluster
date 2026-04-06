@@ -34,16 +34,38 @@ macOS (zsh)                Windows (PowerShell)         Linux (bash)
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# Install from source
-git clone git@github.com:billxc/shell-cluster.git
-cd shell-cluster
-uv tool install .
-
-# Or directly from git
 uv tool install git+https://github.com/billxc/shell-cluster
 ```
 
 Works on macOS, Windows, and Linux with the same command.
+
+### Install as a background service (recommended)
+
+Use [easy-service](https://github.com/billxc/easy-service) to run shell-cluster as a persistent background service that auto-starts on login. No admin/sudo required.
+
+```bash
+# Install easy-service
+uv tool install git+https://github.com/billxc/easy-service.git
+
+# Install shell-cluster as a service (auto-starts immediately)
+easy-service install shellcluster -- shellcluster start --no-open
+```
+
+This creates a native user-level service (LaunchAgent on macOS, systemd --user on Linux, Task Scheduler on Windows).
+
+### Install from local source
+
+If you have both repos cloned side by side:
+
+```bash
+cd shell-cluster
+uv tool install .
+
+# Optional: install as a service
+cd ../easy-service
+uv tool install .
+easy-service install shellcluster -- shellcluster start --no-open
+```
 
 ## Quick Start
 
@@ -51,6 +73,7 @@ Works on macOS, Windows, and Linux with the same command.
 
 ```bash
 uv tool install git+https://github.com/billxc/shell-cluster
+uv tool install git+https://github.com/billxc/easy-service.git
 ```
 
 ### 2. Login to Dev Tunnel (once per machine)
@@ -61,12 +84,14 @@ devtunnel user login
 
 Use the **same Microsoft account** on all machines.
 
-### 3. Register & Start (each machine)
+### 3. Register & start as a service (each machine)
 
 ```bash
 shellcluster register --name my-macbook
-shellcluster start
+easy-service install shellcluster -- shellcluster start --no-open
 ```
+
+The daemon is now running in the background and will auto-start on login.
 
 ### 4. Open Dashboard (any machine)
 
@@ -75,6 +100,14 @@ shellcluster dashboard
 ```
 
 Opens your browser — left sidebar shows all discovered peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
+
+### Run manually (without easy-service)
+
+If you prefer to run the daemon in the foreground:
+
+```bash
+shellcluster start
+```
 
 ## Why Decentralized?
 
@@ -134,6 +167,44 @@ uv sync
 uv run shellcluster start --no-tunnel --name test --port 8765
 ```
 
+## Service Management
+
+Manage the background service installed via [easy-service](https://github.com/billxc/easy-service):
+
+```bash
+easy-service status shellcluster    # Check if running
+easy-service stop shellcluster      # Stop
+easy-service start shellcluster     # Start again
+easy-service restart shellcluster   # Restart
+easy-service uninstall shellcluster # Remove the service
+```
+
+### Preview service manifest
+
+```bash
+easy-service render shellcluster -- shellcluster start --no-open
+```
+
+Prints the service manifest (plist / systemd unit / task XML) without installing.
+
+### Programmatic usage
+
+Other Python projects can also register shell-cluster as a service:
+
+```python
+from easy_service import ServiceSpec, manager_for_platform
+
+spec = ServiceSpec(
+    name="shellcluster",
+    command=["shellcluster", "start", "--no-open"],
+    keep_alive=True,
+)
+
+manager = manager_for_platform()
+manager.install(spec)       # install + auto-start
+manager.status("shellcluster")  # check status
+```
+
 ## Roadmap
 
 - [x] macOS + Linux support (PTY)
@@ -143,7 +214,7 @@ uv run shellcluster start --no-tunnel --name test --port 8765
 - [ ] E2E encryption
 - [x] Web Dashboard (xterm.js)
 - [ ] File transfer
-- [ ] [easy-service](https://github.com/billxc/easy-service) integration for system service registration
+- [x] [easy-service](https://github.com/billxc/easy-service) integration for system service registration
 
 ## License
 

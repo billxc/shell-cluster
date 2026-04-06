@@ -302,4 +302,4 @@ dashboard
 - [x] 会话持久化（shell.attach）
 - [ ] E2E 加密
 - [ ] 文件传输
-- [ ] 系统服务集成（easy-service）
+- [x] 系统服务集成（easy-service）

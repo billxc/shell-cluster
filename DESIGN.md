@@ -301,4 +301,4 @@ page load → query each peer's session list
 - [x] Session persistence (shell.attach)
 - [ ] E2E encryption
 - [ ] File transfer
-- [ ] System service integration (easy-service)
+- [x] System service integration (easy-service)

@@ -180,7 +180,7 @@ class Daemon:
         current_names = {p.name for p in peers if p.name != self._config.node.name and p.status == PeerStatus.ONLINE}
         connected_names = set(self._peer_uris.keys())
 
-        # Connect to new peers, or reconnect if port changed
+        # Connect to new peers, or reconnect if port changed / process died
         for peer in peers:
             if peer.name == self._config.node.name:
                 continue
@@ -189,15 +189,19 @@ class Daemon:
 
             expected_uri = f"ws://localhost:{peer.port}"
             existing_uri = self._peer_uris.get(peer.name)
+            existing_proc = self._tunnel_connect_procs.get(peer.name)
 
-            if existing_uri and existing_uri == expected_uri:
-                # Already connected with correct port — skip
+            # Check if existing connect process is still alive
+            proc_dead = existing_proc is not None and existing_proc.returncode is not None
+
+            if existing_uri and existing_uri == expected_uri and not proc_dead:
+                # Already connected with correct port and process alive — skip
                 continue
 
-            if existing_uri and existing_uri != expected_uri:
-                # Port changed — tear down old connection first
-                log.info("Peer %s port changed (%s -> %s), reconnecting",
-                         peer.name, existing_uri, expected_uri)
+            # Tear down stale connection (port changed OR process died)
+            if existing_uri:
+                reason = "process died" if proc_dead else f"port changed ({existing_uri} -> {expected_uri})"
+                log.info("Peer %s: %s, reconnecting", peer.name, reason)
                 old_proc = self._tunnel_connect_procs.pop(peer.name, None)
                 if old_proc:
                     try:

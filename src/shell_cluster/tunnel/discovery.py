@@ -60,8 +60,14 @@ class PeerDiscovery:
 
             existing = self._peers.get(t.tunnel_id)
             if existing and existing.status == PeerStatus.ONLINE:
-                # Already online — no change needed
-                pass
+                # Already online — check if port changed (peer restarted between cycles)
+                if t.port and t.port != existing.port:
+                    log.info("Peer %s port changed %d -> %d (list_tunnels), refreshing",
+                             existing.name, existing.port, t.port)
+                    remote_port, forwarding_uri = await self._backend.get_port_and_uri(t.tunnel_id)
+                    if remote_port and remote_port > 0:
+                        existing.port = remote_port
+                        existing.forwarding_uri = forwarding_uri
             elif existing:
                 # Was offline, now back online — re-query port (may have changed)
                 log.info("Peer %s back online, refreshing port info", existing.name)

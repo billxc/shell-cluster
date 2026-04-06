@@ -8,6 +8,8 @@ import logging
 import os
 import signal
 import sys
+from urllib.request import urlopen
+from urllib.error import URLError
 
 from shell_cluster.config import Config
 from shell_cluster.tunnel.discovery import PeerDiscovery
@@ -18,6 +20,7 @@ from shell_cluster.web.server import DashboardServer
 log = logging.getLogger(__name__)
 
 DISCOVERY_INTERVAL = 30  # seconds
+HEALTH_CHECK_INTERVAL = 10  # seconds
 
 # Track child PIDs globally so atexit can clean them up
 _child_pids: set[int] = set()
@@ -65,6 +68,8 @@ class Daemon:
         self._dashboard: DashboardServer | None = None
         self._tunnel_connect_procs: dict[str, asyncio.subprocess.Process] = {}
         self._peer_uris: dict[str, str] = {}  # peer_name -> ws:// or wss:// URI
+        self._peer_status: dict[str, str] = {}  # peer_name -> "online" | "offline"
+        self._health_check_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._stopping = False
         self._stopped = False
@@ -107,7 +112,7 @@ class Daemon:
             peers.append({
                 "name": name,
                 "uri": uri,
-                "status": "online",
+                "status": self._peer_status.get(name, "offline"),
             })
             seen.add(name)
 
@@ -154,6 +159,7 @@ class Daemon:
             await self._discovery.refresh()
             await self._on_peers_changed(list(self._discovery.peers.values()))
             self._discovery_task = asyncio.create_task(self._discovery.run_loop())
+            self._health_check_task = asyncio.create_task(self._health_check_loop())
         else:
             await self._server.start()
 
@@ -221,6 +227,7 @@ class Daemon:
                     if proc.pid:
                         _child_pids.add(proc.pid)
                 self._peer_uris[peer.name] = ws_uri
+                self._peer_status[peer.name] = "online"
                 log.info("Mapped peer %s -> %s", peer.name, ws_uri)
             except Exception as e:
                 log.warning("Failed to connect to peer %s: %s", peer.name, e)
@@ -236,7 +243,34 @@ class Daemon:
                 except ProcessLookupError:
                     pass
             self._peer_uris.pop(name, None)
+            self._peer_status.pop(name, None)
             log.info("Disconnected peer %s", name)
+
+    async def _health_check_loop(self) -> None:
+        """Periodically ping each peer's HTTP /sessions endpoint to check liveness."""
+        loop = asyncio.get_event_loop()
+        while not self._stopping:
+            peers_snapshot = dict(self._peer_uris)
+            for name, uri in peers_snapshot.items():
+                http_url = uri.replace("wss://", "https://").replace("ws://", "http://") + "/sessions"
+                try:
+                    alive = await asyncio.wait_for(
+                        loop.run_in_executor(None, self._ping_peer, http_url),
+                        timeout=3.0,
+                    )
+                    self._peer_status[name] = "online" if alive else "offline"
+                except (asyncio.TimeoutError, Exception):
+                    self._peer_status[name] = "offline"
+            await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+
+    @staticmethod
+    def _ping_peer(url: str) -> bool:
+        """Blocking HTTP GET to check if peer is reachable."""
+        try:
+            with urlopen(url, timeout=2) as resp:
+                return resp.status == 200
+        except (URLError, OSError):
+            return False
 
     def _handle_signal(self) -> None:
         """Handle SIGINT/SIGTERM. Second signal forces immediate exit."""
@@ -263,6 +297,12 @@ class Daemon:
                 await asyncio.wait_for(self._discovery_task, timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
+        if self._health_check_task:
+            self._health_check_task.cancel()
+            try:
+                await asyncio.wait_for(self._health_check_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
 
         if self._dashboard:
             try:
@@ -285,6 +325,7 @@ class Daemon:
                 pass
         self._tunnel_connect_procs.clear()
         self._peer_uris.clear()
+        self._peer_status.clear()
 
         # Kill host process
         if self._host_process:

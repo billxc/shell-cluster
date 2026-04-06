@@ -333,30 +333,38 @@ async function fetchPeers() {
   renderPeers();
 }
 
-// --- Fetch sessions from all peers via HTTP API ---
+// --- Fetch sessions from each peer directly (parallel) ---
 async function fetchSessions() {
   loadingSessions = true;
   renderPeers();
-  try {
-    const resp = await fetch('/api/sessions');
-    const data = await resp.json();
-    // data = { "peer-name": [{id, shell, created_at}, ...], ... }
-    const newRemote = new Map();
-    for (const [peerName, peerSessions] of Object.entries(data)) {
-      if (!Array.isArray(peerSessions)) continue;
+  const newRemote = new Map();
+
+  // Query each peer's /sessions HTTP endpoint in parallel
+  const promises = PEERS.map(async (peer) => {
+    if (!peer.uri) return;
+    try {
+      // Derive HTTP URL from ws:// URI: ws://localhost:PORT -> http://localhost:PORT/sessions
+      const httpUrl = peer.uri.replace(/^ws(s?):\/\//, (_, s) => `http${s}://`) + '/sessions';
+      const resp = await fetch(httpUrl, { signal: AbortSignal.timeout(3000) });
+      const peerSessions = await resp.json();
+      if (!Array.isArray(peerSessions)) return;
       // Filter out sessions we already have connected locally (skip disconnected)
       const connectedIds = new Set();
       for (const [, s] of sessions) {
-        if (s.peerName === peerName && !s._disconnected) connectedIds.add(s.sessionId);
+        if (s.peerName === peer.name && !s._disconnected) connectedIds.add(s.sessionId);
       }
       const remote = peerSessions.filter(s => !connectedIds.has(s.id));
-      newRemote.set(peerName, remote);
+      newRemote.set(peer.name, remote);
+    } catch (e) {
+      console.debug(`Failed to fetch sessions from ${peer.name}:`, e);
     }
-    remoteSessions.clear();
-    for (const [k, v] of newRemote) remoteSessions.set(k, v);
-  } catch (e) {
-    console.warn('Failed to fetch sessions:', e);
-  }
+  });
+
+  await Promise.allSettled(promises);
+
+  remoteSessions.clear();
+  for (const [k, v] of newRemote) remoteSessions.set(k, v);
+
   loadingSessions = false;
   renderPeers();
 }

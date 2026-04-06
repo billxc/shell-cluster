@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import websockets
@@ -40,10 +41,33 @@ class ShellServer:
 
     async def start(self) -> None:
         """Start the WebSocket server."""
+        shell_manager = self._shell_manager
+
+        async def process_request(connection, request):
+            """Handle HTTP requests (non-WebSocket)."""
+            if request.headers.get("Upgrade", "").lower() == "websocket":
+                return None
+
+            if request.path == "/sessions":
+                if request.method == "OPTIONS":
+                    response = connection.respond(204, "")
+                    response.headers["Access-Control-Allow-Origin"] = "*"
+                    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+                    return response
+                body = json.dumps(shell_manager.list_sessions())
+                response = connection.respond(200, body)
+                response.headers["Content-Type"] = "application/json"
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                return response
+
+            return connection.respond(404, "Not Found")
+
         self._server = await websockets.asyncio.server.serve(
             self._handle_client,
             self._bind_host,
             self._port,
+            process_request=process_request,
             max_size=1_048_576,
         )
         # Update port in case 0 was used (OS-assigned)

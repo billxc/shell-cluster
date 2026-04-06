@@ -176,15 +176,38 @@ class Daemon:
     async def _on_peers_changed(self, peers: list) -> None:
         """Called when discovery finds new/lost peers. Manage devtunnel connect."""
         backend = self._get_tunnel_backend()
-        current_names = {p.name for p in peers if p.name != self._config.node.name}
+        from shell_cluster.models import PeerStatus
+        current_names = {p.name for p in peers if p.name != self._config.node.name and p.status == PeerStatus.ONLINE}
         connected_names = set(self._peer_uris.keys())
 
-        # Connect to new peers
+        # Connect to new peers, or reconnect if port changed
         for peer in peers:
             if peer.name == self._config.node.name:
                 continue
-            if peer.name in connected_names:
+            if peer.status != PeerStatus.ONLINE:
                 continue
+
+            expected_uri = f"ws://localhost:{peer.port}"
+            existing_uri = self._peer_uris.get(peer.name)
+
+            if existing_uri and existing_uri == expected_uri:
+                # Already connected with correct port — skip
+                continue
+
+            if existing_uri and existing_uri != expected_uri:
+                # Port changed — tear down old connection first
+                log.info("Peer %s port changed (%s -> %s), reconnecting",
+                         peer.name, existing_uri, expected_uri)
+                old_proc = self._tunnel_connect_procs.pop(peer.name, None)
+                if old_proc:
+                    try:
+                        old_proc.kill()
+                        if old_proc.pid:
+                            _child_pids.discard(old_proc.pid)
+                    except ProcessLookupError:
+                        pass
+                self._peer_uris.pop(peer.name, None)
+
             try:
                 proc, ws_uri = await backend.connect(peer.tunnel_id, peer.port)
                 if proc:

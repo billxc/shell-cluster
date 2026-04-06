@@ -58,11 +58,26 @@ class PeerDiscovery:
                 continue
             seen.add(t.tunnel_id)
 
-            if t.tunnel_id in self._peers:
-                self._peers[t.tunnel_id].status = PeerStatus.ONLINE
+            existing = self._peers.get(t.tunnel_id)
+            if existing and existing.status == PeerStatus.ONLINE:
+                # Already online — no change needed
+                pass
+            elif existing:
+                # Was offline, now back online — re-query port (may have changed)
+                log.info("Peer %s back online, refreshing port info", existing.name)
+                remote_port, forwarding_uri = await self._backend.get_port_and_uri(t.tunnel_id)
+                if remote_port and remote_port > 0:
+                    existing.port = remote_port
+                    existing.forwarding_uri = forwarding_uri
+                    existing.status = PeerStatus.ONLINE
+                else:
+                    log.warning("Peer %s returned invalid port %s, keeping offline", existing.name, remote_port)
             else:
                 # New peer discovered — get port info
                 remote_port, forwarding_uri = await self._backend.get_port_and_uri(t.tunnel_id)
+                if not remote_port or remote_port <= 0:
+                    log.warning("New peer %s has invalid port %s, skipping", t.tunnel_id, remote_port)
+                    continue
                 name = parse_node_name(t.tunnel_id)
                 peer = Peer(
                     name=name,

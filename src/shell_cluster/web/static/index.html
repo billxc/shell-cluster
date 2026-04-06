@@ -639,10 +639,11 @@ function createSession(peer, existingSessionId) {
         gotCreated = true;
         renderTabs();
         renderPeers();
-        if (!isAttach) {
-          term.writeln(`\x1b[2mShell: ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
+        if (isAttach) {
+          // Clear the "Reconnecting..." text so scrollback replays cleanly
+          term.clear();
         } else {
-          term.writeln(`\x1b[2mReconnected to ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
+          term.writeln(`\x1b[2mShell: ${msg.shell} (${msg.session_id})\x1b[0m\r\n`);
         }
         return;
       }

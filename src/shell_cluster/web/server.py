@@ -1,7 +1,7 @@
 """HTTP + WebSocket proxy server for the web dashboard.
 
-Serves static HTML, provides /api/peers endpoint, and proxies
-WebSocket connections to peer shell servers via localhost.
+Serves static HTML, provides /api/peers and /api/sessions endpoints,
+and proxies WebSocket connections to peer shell servers via localhost.
 """
 
 from __future__ import annotations
@@ -19,6 +19,29 @@ import websockets
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+async def _query_peer_sessions(peer_uri: str, timeout: float = 3.0) -> list[dict]:
+    """Connect to a peer's shell server via WS and fetch its session list."""
+    try:
+        async with asyncio.timeout(timeout):
+            async with websockets.connect(peer_uri) as ws:
+                # First message from peer is peer.info — verify and discard
+                raw_info = await ws.recv()
+                info = json.loads(raw_info)
+                if info.get("type") != "peer.info":
+                    return []
+                # Send shell.list request
+                await ws.send(json.dumps({"type": "shell.list"}))
+                raw = await ws.recv()
+                msg = json.loads(raw)
+                if msg.get("type") == "shell.list.response":
+                    return msg.get("sessions", [])
+    except (asyncio.TimeoutError, OSError, websockets.WebSocketException) as e:
+        log.debug("Failed to query sessions from %s: %s", peer_uri, e)
+    except Exception as e:
+        log.warning("Unexpected error querying sessions from %s: %s", peer_uri, e)
+    return []
 
 
 class DashboardServer:
@@ -61,6 +84,27 @@ class DashboardServer:
             if path == "/api/peers":
                 peers_json = json.dumps(get_peers())
                 response = connection.respond(200, peers_json)
+                response.headers["Content-Type"] = "application/json"
+                return response
+
+            # API: return sessions from all peers
+            if path == "/api/sessions":
+                peers = get_peers()
+                tasks = {
+                    p["name"]: asyncio.create_task(_query_peer_sessions(p["uri"]))
+                    for p in peers
+                    if p.get("uri")
+                }
+                try:
+                    result = {}
+                    for name, task in tasks.items():
+                        result[name] = await task
+                except BaseException:
+                    for task in tasks.values():
+                        task.cancel()
+                    raise
+                body = json.dumps(result)
+                response = connection.respond(200, body)
                 response.headers["Content-Type"] = "application/json"
                 return response
 
@@ -135,7 +179,7 @@ class DashboardServer:
             except Exception as e:
                 log.error("Proxy connection failed: %s", e)
                 try:
-                    await ws.send(json.dumps({"type": "error", "error": str(e)}))
+                    await ws.send(json.dumps({"type": "error", "error": "Connection to peer failed"}))
                 except websockets.ConnectionClosed:
                     pass
 

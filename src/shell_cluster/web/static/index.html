@@ -9,7 +9,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --sidebar-width: 240px;
+  --sidebar-width: 260px;
   --bg: #1e1e2e;
   --bg-surface: #181825;
   --bg-hover: #313244;
@@ -19,6 +19,7 @@
   --green: #a6e3a1;
   --red: #f38ba8;
   --blue: #89b4fa;
+  --yellow: #f9e2af;
   --accent: #cba6f7;
 }
 
@@ -62,7 +63,7 @@ body {
 }
 
 .peer-group {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .peer-header {
@@ -71,9 +72,9 @@ body {
   gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
-  cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  user-select: none;
 }
 
 .peer-header:hover { background: var(--bg-hover); }
@@ -87,26 +88,106 @@ body {
 
 .peer-status.online { background: var(--green); }
 .peer-status.offline { background: var(--red); }
-.peer-status.connecting { background: #f9e2af; }
+.peer-status.connecting { background: var(--yellow); }
+
+.peer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.peer-header:hover .peer-actions { opacity: 1; }
+
+.peer-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 3px;
+}
+
+.peer-btn:hover { color: var(--text); background: var(--bg-active); }
+
+.peer-sessions {
+  overflow: hidden;
+}
+
+.peer-sessions.collapsed {
+  display: none;
+}
 
 .session-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px 6px 28px;
+  padding: 5px 10px 5px 26px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-dim);
+  transition: background 0.1s;
 }
 
 .session-item:hover { background: var(--bg-hover); color: var(--text); }
 .session-item.active { background: var(--bg-active); color: var(--text); }
 
-.session-icon { font-size: 14px; }
+.session-icon { font-size: 13px; flex-shrink: 0; }
+
+.session-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-time {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.session-item.remote {
+  opacity: 0.65;
+  border-left: 2px solid var(--blue);
+  margin-left: 2px;
+  padding-left: 24px;
+}
+
+.session-item.remote:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--blue);
+}
+
+.loading-hint {
+  padding: 6px 10px 6px 26px;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.no-sessions-hint {
+  padding: 6px 10px 6px 26px;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  font-style: italic;
+}
 
 #sidebar-footer {
-  padding: 12px;
+  padding: 10px 12px;
   border-top: 1px solid var(--bg-hover);
   display: flex;
   gap: 8px;
@@ -121,9 +202,11 @@ body {
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
+  transition: background 0.15s;
 }
 
 #sidebar-footer button:hover { background: var(--bg-active); }
+#sidebar-footer button:disabled { opacity: 0.4; cursor: default; }
 
 /* Main area */
 #main {
@@ -143,17 +226,21 @@ body {
   min-height: 36px;
 }
 
+#tab-bar::-webkit-scrollbar { height: 2px; }
+#tab-bar::-webkit-scrollbar-thumb { background: var(--bg-active); }
+
 .tab {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 16px;
+  padding: 8px 14px;
   font-size: 12px;
   color: var(--text-dim);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
   flex-shrink: 0;
+  transition: color 0.1s, background 0.1s;
 }
 
 .tab:hover { color: var(--text); background: var(--bg-hover); }
@@ -161,12 +248,14 @@ body {
 
 .tab-close {
   font-size: 14px;
-  opacity: 0.5;
+  opacity: 0;
   cursor: pointer;
   margin-left: 4px;
+  transition: opacity 0.1s;
 }
 
-.tab-close:hover { opacity: 1; color: var(--red); }
+.tab:hover .tab-close { opacity: 0.5; }
+.tab-close:hover { opacity: 1 !important; color: var(--red); }
 
 /* Terminal area */
 #terminal-container {
@@ -205,7 +294,7 @@ body {
   </div>
   <div id="peer-list"></div>
   <div id="sidebar-footer">
-    <button onclick="refreshPeers()">&#x21bb; Refresh</button>
+    <button id="btn-refresh" onclick="refreshAll()">&#x21bb; Refresh</button>
   </div>
 </div>
 
@@ -214,8 +303,8 @@ body {
   <div id="terminal-container">
     <div id="welcome">
       <div>
-        Select a peer and click <b>+ New Shell</b><br>
-        or click a peer name to connect
+        Select a peer and click <b>+</b> to open a new shell<br>
+        or click an existing session to reconnect
       </div>
     </div>
   </div>
@@ -224,13 +313,14 @@ body {
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
-// Peers fetched from API
+// --- State ---
 let PEERS = [];
-
-// State
-const sessions = new Map();
+const sessions = new Map();        // tabId -> session state (locally connected)
+const remoteSessions = new Map();   // peer.name -> [{id, shell, created_at}]
+const collapsedPeers = new Set();   // peer names that are collapsed
 let activeTab = null;
 let tabCounter = 0;
+let loadingSessions = false;
 
 // --- Fetch peers from daemon ---
 async function fetchPeers() {
@@ -243,7 +333,49 @@ async function fetchPeers() {
   renderPeers();
 }
 
-// --- Peer list ---
+// --- Fetch sessions from all peers via HTTP API ---
+async function fetchSessions() {
+  loadingSessions = true;
+  renderPeers();
+  try {
+    const resp = await fetch('/api/sessions');
+    const data = await resp.json();
+    // data = { "peer-name": [{id, shell, created_at}, ...], ... }
+    const newRemote = new Map();
+    for (const [peerName, peerSessions] of Object.entries(data)) {
+      if (!Array.isArray(peerSessions)) continue;
+      // Filter out sessions we already have connected locally (skip disconnected)
+      const connectedIds = new Set();
+      for (const [, s] of sessions) {
+        if (s.peerName === peerName && !s._disconnected) connectedIds.add(s.sessionId);
+      }
+      const remote = peerSessions.filter(s => !connectedIds.has(s.id));
+      newRemote.set(peerName, remote);
+    }
+    remoteSessions.clear();
+    for (const [k, v] of newRemote) remoteSessions.set(k, v);
+  } catch (e) {
+    console.warn('Failed to fetch sessions:', e);
+  }
+  loadingSessions = false;
+  renderPeers();
+}
+
+// --- Refresh everything ---
+async function refreshAll() {
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled = true;
+  btn.textContent = '... Loading';
+  try {
+    await fetchPeers();
+    await fetchSessions();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '\u21bb Refresh';
+  }
+}
+
+// --- Peer list rendering ---
 function renderPeers() {
   const list = document.getElementById('peer-list');
   list.innerHTML = '';
@@ -252,41 +384,104 @@ function renderPeers() {
     const group = document.createElement('div');
     group.className = 'peer-group';
 
+    const isCollapsed = collapsedPeers.has(peer.name);
+
+    // Peer header
     const header = document.createElement('div');
     header.className = 'peer-header';
+
+    const validStatuses = ['online', 'offline', 'connecting'];
+    const statusClass = validStatuses.includes(peer.status) ? peer.status : 'online';
     header.innerHTML = `
-      <span class="peer-status ${peer.status || 'online'}"></span>
-      <span style="flex:1">${esc(peer.name)}</span>
-      <span style="font-size:16px;opacity:0.5" title="New shell">+</span>
+      <span class="peer-status ${statusClass}"></span>
+      <span class="peer-name">${esc(peer.name)}</span>
+      <span class="peer-actions">
+        <button class="peer-btn" title="New shell" data-action="new">+</button>
+        <button class="peer-btn" title="${isCollapsed ? 'Expand' : 'Collapse'}" data-action="toggle">${isCollapsed ? '\u25B6' : '\u25BC'}</button>
+      </span>
     `;
-    header.onclick = () => createSession(peer);
+    header.addEventListener('click', (e) => {
+      const action = e.target.closest('[data-action]');
+      if (action) {
+        e.stopPropagation();
+        if (action.dataset.action === 'new') {
+          createSession(peer);
+        } else if (action.dataset.action === 'toggle') {
+          togglePeer(peer.name);
+        }
+      } else {
+        togglePeer(peer.name);
+      }
+    });
     group.appendChild(header);
 
-    // Show existing local sessions for this peer
+    // Sessions container
+    const sessionsDiv = document.createElement('div');
+    sessionsDiv.className = 'peer-sessions' + (isCollapsed ? ' collapsed' : '');
+
+    // Connected sessions (local)
+    let hasAny = false;
     for (const [tabId, s] of sessions) {
       if (s.peerName === peer.name) {
+        hasAny = true;
         const item = document.createElement('div');
+        const isDisconnected = s._disconnected;
         item.className = 'session-item' + (tabId === activeTab ? ' active' : '');
-        item.innerHTML = `<span class="session-icon">&#x25B8;</span> ${esc(s.shell || 'shell')} #${s.sessionId.slice(0,6)}`;
+        if (isDisconnected) item.style.opacity = '0.5';
+        item.innerHTML = `
+          <span class="session-icon">${isDisconnected ? '&#x25CB;' : '&#x25B8;'}</span>
+          <span class="session-label">${esc(s.shell || 'shell')} #${s.sessionId.slice(0,6)}${isDisconnected ? ' (disconnected)' : ''}</span>
+        `;
         item.onclick = (e) => { e.stopPropagation(); switchTab(tabId); };
-        group.appendChild(item);
+        sessionsDiv.appendChild(item);
       }
     }
 
-    // Show remote sessions (not yet reconnected)
+    // Remote sessions (on server but not locally connected)
     const remote = remoteSessions.get(peer.name) || [];
     for (const rs of remote) {
+      hasAny = true;
       const item = document.createElement('div');
-      item.className = 'session-item';
-      item.style.opacity = '0.6';
-      item.innerHTML = `<span class="session-icon">&#x21bb;</span> ${esc(rs.shell || 'shell')} #${rs.id.slice(0,6)}`;
-      item.title = 'Click to reconnect';
+      item.className = 'session-item remote';
+      const age = rs.created_at ? timeAgo(rs.created_at) : '';
+      item.innerHTML = `
+        <span class="session-icon" style="color:var(--blue)">&#x21bb;</span>
+        <span class="session-label">${esc(rs.shell || 'shell')} #${rs.id.slice(0,6)}</span>
+        ${age ? `<span class="session-time">${age}</span>` : ''}
+      `;
+      item.title = 'Click to reconnect to this session';
       item.onclick = (e) => { e.stopPropagation(); createSession(peer, rs.id); };
-      group.appendChild(item);
+      sessionsDiv.appendChild(item);
     }
 
+    // Loading state
+    if (loadingSessions && !hasAny) {
+      const hint = document.createElement('div');
+      hint.className = 'loading-hint';
+      hint.textContent = 'Loading sessions...';
+      sessionsDiv.appendChild(hint);
+    }
+
+    // No sessions hint
+    if (!loadingSessions && !hasAny) {
+      const hint = document.createElement('div');
+      hint.className = 'no-sessions-hint';
+      hint.textContent = 'No active sessions';
+      sessionsDiv.appendChild(hint);
+    }
+
+    group.appendChild(sessionsDiv);
     list.appendChild(group);
   }
+}
+
+function togglePeer(name) {
+  if (collapsedPeers.has(name)) {
+    collapsedPeers.delete(name);
+  } else {
+    collapsedPeers.add(name);
+  }
+  renderPeers();
 }
 
 // --- Tabs ---
@@ -309,7 +504,6 @@ function renderTabs() {
 function switchTab(tabId) {
   activeTab = tabId;
 
-  // Hide all panes
   document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('active'));
   const welcome = document.getElementById('welcome');
 
@@ -317,7 +511,6 @@ function switchTab(tabId) {
   if (s && s.pane) {
     s.pane.classList.add('active');
     welcome.style.display = 'none';
-    // Fit terminal to new size
     setTimeout(() => {
       s.fitAddon.fit();
       s.term.focus();
@@ -333,13 +526,17 @@ function createSession(peer, existingSessionId) {
   const tabId = `tab-${++tabCounter}`;
   const isAttach = !!existingSessionId;
 
-  // Create terminal pane
+  // If reconnecting, remove from remoteSessions
+  if (isAttach) {
+    const remote = remoteSessions.get(peer.name) || [];
+    remoteSessions.set(peer.name, remote.filter(r => r.id !== existingSessionId));
+  }
+
   const pane = document.createElement('div');
   pane.className = 'terminal-pane';
   pane.id = tabId;
   document.getElementById('terminal-container').appendChild(pane);
 
-  // Create xterm
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 14,
@@ -364,7 +561,6 @@ function createSession(peer, existingSessionId) {
   term.open(pane);
   fitAddon.fit();
 
-  // Connect via proxy WebSocket
   const wsUrl = `ws://${location.host}`;
   const ws = new WebSocket(wsUrl);
   const sessionId = existingSessionId || genId();
@@ -381,7 +577,6 @@ function createSession(peer, existingSessionId) {
     ws.send(JSON.stringify({ target: peer.uri }));
   };
 
-  let initialized = false;
   let gotCreated = false;
 
   ws.onmessage = (event) => {
@@ -406,7 +601,6 @@ function createSession(peer, existingSessionId) {
             cols, rows,
           }));
         }
-        initialized = true;
         return;
       }
 
@@ -424,7 +618,9 @@ function createSession(peer, existingSessionId) {
       }
 
       if (msg.type === 'shell.data' && msg.data) {
-        const bytes = atob(msg.data);
+        const raw = atob(msg.data);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
         term.write(bytes);
         return;
       }
@@ -440,24 +636,24 @@ function createSession(peer, existingSessionId) {
       }
 
     } catch (e) {
-      // Not JSON, raw data - shouldn't happen with our protocol
       term.write(data);
     }
   };
 
   ws.onclose = () => {
     term.writeln('\r\n\x1b[2m[Disconnected]\x1b[0m');
+    sessionState._disconnected = true;
+    renderPeers();
   };
 
   ws.onerror = () => {
     term.writeln('\r\n\x1b[31m[Connection error]\x1b[0m');
   };
 
-  // Terminal input -> WebSocket
   term.onData((data) => {
     if (ws.readyState === WebSocket.OPEN && gotCreated) {
-      // Encode as base64
-      const b64 = btoa(data);
+      const encoded = new TextEncoder().encode(data);
+      const b64 = btoa(String.fromCharCode(...encoded));
       ws.send(JSON.stringify({
         type: 'shell.data',
         session_id: sessionId,
@@ -466,7 +662,6 @@ function createSession(peer, existingSessionId) {
     }
   });
 
-  // Handle resize
   term.onResize(({ cols, rows }) => {
     if (ws.readyState === WebSocket.OPEN && gotCreated) {
       ws.send(JSON.stringify({
@@ -477,7 +672,6 @@ function createSession(peer, existingSessionId) {
     }
   });
 
-  // Window resize -> fit terminal
   const resizeObserver = new ResizeObserver(() => {
     if (activeTab === tabId) {
       fitAddon.fit();
@@ -493,7 +687,6 @@ function closeSession(tabId) {
   const s = sessions.get(tabId);
   if (!s) return;
 
-  // Send close to server
   if (s.ws.readyState === WebSocket.OPEN) {
     try {
       s.ws.send(JSON.stringify({
@@ -504,13 +697,11 @@ function closeSession(tabId) {
     s.ws.close();
   }
 
-  // Cleanup
   s.term.dispose();
   s._resizeObserver?.disconnect();
   s.pane.remove();
   sessions.delete(tabId);
 
-  // Switch to another tab or show welcome
   if (activeTab === tabId) {
     const remaining = [...sessions.keys()];
     if (remaining.length > 0) {
@@ -526,56 +717,6 @@ function closeSession(tabId) {
   renderTabs();
 }
 
-function refreshPeers() {
-  // Query each peer for existing sessions
-  for (const peer of PEERS) {
-    queryPeerSessions(peer);
-  }
-}
-
-// Track remote sessions per peer (not yet connected locally)
-const remoteSessions = new Map(); // peer.name -> [{id, shell}]
-
-async function queryPeerSessions(peer) {
-  try {
-    const ws = new WebSocket(`ws://${location.host}`);
-    await new Promise((resolve, reject) => {
-      ws.onopen = resolve;
-      ws.onerror = reject;
-      setTimeout(reject, 3000);
-    });
-    ws.send(JSON.stringify({ target: peer.uri }));
-
-    const peerInfo = await new Promise((resolve, reject) => {
-      ws.onmessage = (e) => resolve(JSON.parse(e.data));
-      setTimeout(reject, 3000);
-    });
-
-    // Request session list
-    ws.send(JSON.stringify({ type: 'shell.list' }));
-    const listResp = await new Promise((resolve, reject) => {
-      ws.onmessage = (e) => resolve(JSON.parse(e.data));
-      setTimeout(reject, 3000);
-    });
-
-    ws.close();
-
-    if (listResp.type === 'shell.list.response' && listResp.sessions) {
-      // Filter out sessions we're already connected to
-      const connectedIds = new Set();
-      for (const [, s] of sessions) {
-        if (s.peerName === peer.name) connectedIds.add(s.sessionId);
-      }
-      const remote = listResp.sessions.filter(s => !connectedIds.has(s.id));
-      remoteSessions.set(peer.name, remote);
-    }
-  } catch (e) {
-    // Peer unreachable
-    remoteSessions.set(peer.name, []);
-  }
-  renderPeers();
-}
-
 // --- Helpers ---
 function genId() {
   return Math.random().toString(16).slice(2, 14);
@@ -587,15 +728,55 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function timeAgo(isoStr) {
+  try {
+    const then = new Date(isoStr);
+    const now = new Date();
+    const sec = Math.floor((now - then) / 1000);
+    if (sec < 60) return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h`;
+    const day = Math.floor(hr / 24);
+    return `${day}d`;
+  } catch (e) {
+    return '';
+  }
+}
+
+// --- Keyboard shortcuts ---
+document.addEventListener('keydown', (e) => {
+  // Alt+[ / Alt+] to switch tabs (Ctrl+Tab is intercepted by browsers)
+  if (e.altKey && (e.key === '[' || e.key === ']')) {
+    e.preventDefault();
+    const tabIds = [...sessions.keys()];
+    if (tabIds.length < 2) return;
+    const idx = tabIds.indexOf(activeTab);
+    const next = e.key === '['
+      ? (idx - 1 + tabIds.length) % tabIds.length
+      : (idx + 1) % tabIds.length;
+    switchTab(tabIds[next]);
+  }
+});
+
 // --- Init ---
-fetchPeers();
-renderTabs();
-// Retry quickly at startup (discovery may still be running), then slow down
-setTimeout(fetchPeers, 3000);
-setTimeout(fetchPeers, 8000);
-setTimeout(fetchPeers, 15000);
-// Then refresh every 30s
-setInterval(fetchPeers, 30000);
+async function init() {
+  await fetchPeers();
+  await fetchSessions();
+  renderTabs();
+}
+init();
+
+// Retry at startup for late-starting peers
+setTimeout(() => fetchPeers().then(fetchSessions), 3000);
+setTimeout(() => fetchPeers().then(fetchSessions), 10000);
+
+// Periodic refresh
+setInterval(async () => {
+  await fetchPeers();
+  await fetchSessions();
+}, 30000);
 
 // Global resize
 window.addEventListener('resize', () => {

@@ -200,7 +200,10 @@ class DashboardServer:
     async def stop(self) -> None:
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), timeout=2.0)
+            except asyncio.TimeoutError:
+                log.warning("Dashboard server wait_closed timed out")
 
 
 def _guess_content_type(suffix: str) -> str:

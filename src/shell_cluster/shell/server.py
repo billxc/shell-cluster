@@ -62,7 +62,10 @@ class ShellServer:
         """Stop the server and clean up."""
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), timeout=2.0)
+            except asyncio.TimeoutError:
+                log.warning("Shell server wait_closed timed out")
         await self._shell_manager.close_all()
 
     async def _handle_client(self, ws: ServerConnection) -> None:

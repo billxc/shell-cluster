@@ -41,7 +41,12 @@ class PeerDiscovery:
     async def refresh(self) -> list[Peer]:
         """Refresh the peer list from the tunnel backend."""
         try:
-            tunnels = await self._backend.list_tunnels(self._label)
+            tunnels = await asyncio.wait_for(
+                self._backend.list_tunnels(self._label), timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            log.warning("Discovery refresh timed out")
+            return list(self._peers.values())
         except Exception as e:
             log.warning("Discovery refresh failed: %s", e)
             return list(self._peers.values())

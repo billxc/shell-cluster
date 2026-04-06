@@ -296,6 +296,15 @@ class ShellManager:
         """Close all sessions."""
         for sid in list(self._sessions):
             await self.close(sid)
+        # Force cancel any remaining reader tasks stuck in run_in_executor
+        for sid, reader in list(self._readers.items()):
+            if not reader.done():
+                reader.cancel()
+                try:
+                    await asyncio.wait_for(reader, timeout=0.5)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+        self._readers.clear()
 
     def list_sessions(self) -> list[dict]:
         """Return session info as dicts for protocol messages."""

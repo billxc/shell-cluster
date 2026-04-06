@@ -66,6 +66,7 @@ class Daemon:
         self._peer_uris: dict[str, str] = {}  # peer_name -> ws:// or wss:// URI
         self._stop_event = asyncio.Event()
         self._stopping = False
+        self._stopped = False
 
     def _get_tunnel_backend(self):
         if self._tunnel_backend is None:
@@ -118,7 +119,7 @@ class Daemon:
         if sys.platform != "win32":
             loop = asyncio.get_event_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.stop()))
+                loop.add_signal_handler(sig, self._handle_signal)
 
         if not self._no_tunnel:
             await self._server.start()
@@ -208,10 +209,20 @@ class Daemon:
             self._peer_uris.pop(name, None)
             log.info("Disconnected peer %s", name)
 
-    async def stop(self) -> None:
-        """Stop all components and clean up."""
+    def _handle_signal(self) -> None:
+        """Handle SIGINT/SIGTERM. Second signal forces immediate exit."""
         if self._stopping:
+            log.warning("Second signal received, forcing exit")
+            _cleanup_children()
+            os._exit(1)
+        self._stopping = True
+        asyncio.create_task(self.stop())
+
+    async def stop(self) -> None:
+        """Stop all components and clean up (with timeouts to avoid hanging)."""
+        if self._stopped:
             return
+        self._stopped = True
         self._stopping = True
         log.info("Stopping daemon...")
 
@@ -220,14 +231,20 @@ class Daemon:
         if self._discovery_task:
             self._discovery_task.cancel()
             try:
-                await self._discovery_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self._discovery_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
         if self._dashboard:
-            await self._dashboard.stop()
+            try:
+                await asyncio.wait_for(self._dashboard.stop(), timeout=2.0)
+            except asyncio.TimeoutError:
+                log.warning("Dashboard stop timed out")
 
-        await self._server.stop()
+        try:
+            await asyncio.wait_for(self._server.stop(), timeout=3.0)
+        except asyncio.TimeoutError:
+            log.warning("Shell server stop timed out")
 
         # Kill tunnel connect processes
         for name, proc in self._tunnel_connect_procs.items():
@@ -244,10 +261,10 @@ class Daemon:
         if self._host_process:
             try:
                 self._host_process.kill()
-                await self._host_process.wait()
+                await asyncio.wait_for(self._host_process.wait(), timeout=2.0)
                 if self._host_process.pid:
                     _child_pids.discard(self._host_process.pid)
-            except ProcessLookupError:
+            except (ProcessLookupError, asyncio.TimeoutError):
                 pass
 
         self._stop_event.set()
@@ -266,5 +283,6 @@ class Daemon:
         finally:
             if not self._stopping:
                 await self.stop()
-            # Force exit — PTY reader threads may block shutdown
+            # Force exit — PTY reader threads may block normal shutdown
+            _cleanup_children()
             os._exit(0)

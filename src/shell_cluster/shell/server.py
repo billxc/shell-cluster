@@ -49,12 +49,6 @@ class ShellServer:
                 return None
 
             if request.path == "/sessions":
-                if request.method == "OPTIONS":
-                    response = connection.respond(204, "")
-                    response.headers["Access-Control-Allow-Origin"] = "*"
-                    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-                    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-                    return response
                 body = json.dumps(shell_manager.list_sessions())
                 response = connection.respond(200, body)
                 response.headers["Content-Type"] = "application/json"

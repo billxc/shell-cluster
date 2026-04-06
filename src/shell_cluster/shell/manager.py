@@ -155,6 +155,7 @@ class ShellManager:
                 )
                 if not data:
                     break
+                session.append_output(data)
                 await on_output(session.session_id, data)
         except (OSError, IOError):
             pass

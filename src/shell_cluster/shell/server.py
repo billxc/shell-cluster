@@ -184,6 +184,11 @@ class ShellServer:
                 await self._shell_manager.resize(msg.session_id, msg.cols, msg.rows)
             resp = make_shell_attached(session.session_id, session.shell)
             await ws.send(resp.to_json())
+            # Replay scrollback buffer so client sees previous output
+            scrollback = session.get_scrollback()
+            if scrollback:
+                replay_msg = make_shell_data(session.session_id, scrollback)
+                await ws.send(replay_msg.to_json())
         else:
             await ws.send(make_error(f"Session {msg.session_id} not found", msg.session_id).to_json())
 

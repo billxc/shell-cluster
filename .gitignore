@@ -18,6 +18,7 @@ venv/
 .vscode/
 *.swp
 *.swo
+.harness/
 
 # OS
 .DS_Store

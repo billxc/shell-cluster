@@ -44,6 +44,7 @@ class ShellServer:
             self._handle_client,
             self._bind_host,
             self._port,
+            max_size=1_048_576,
         )
         # Update port in case 0 was used (OS-assigned)
         for sock in self._server.sockets:
@@ -107,6 +108,9 @@ class ShellServer:
 
     async def _handle_create(self, ws: ServerConnection, msg: Message) -> None:
         """Create a new shell session."""
+        if msg.session_id in self._shell_manager.sessions:
+            await ws.send(make_error(f"Session {msg.session_id} already exists", msg.session_id).to_json())
+            return
 
         async def on_output(session_id: str, data: bytes) -> None:
             out_msg = make_shell_data(session_id, data)
@@ -119,7 +123,7 @@ class ShellServer:
         try:
             session = await self._shell_manager.create(
                 session_id=msg.session_id,
-                shell=msg.shell,
+                shell="",
                 cols=msg.cols or 80,
                 rows=msg.rows or 24,
                 on_output=on_output,
@@ -137,7 +141,8 @@ class ShellServer:
     async def _handle_data(self, ws: ServerConnection, msg: Message) -> None:
         """Forward input data to a shell session."""
         data = decode_shell_data(msg)
-        await self._shell_manager.write(msg.session_id, data)
+        if not await self._shell_manager.write(msg.session_id, data):
+            await self._send_to_client(ws, make_shell_closed(msg.session_id))
 
     async def _handle_attach(self, ws: ServerConnection, msg: Message) -> None:
         """Re-attach to an existing shell session."""
@@ -167,11 +172,13 @@ class ShellServer:
 
     async def _handle_close(self, ws: ServerConnection, msg: Message) -> None:
         """Close a shell session."""
-        await self._shell_manager.close(msg.session_id)
-        # Remove from client tracking
+        closed = await self._shell_manager.close(msg.session_id)
         if ws in self._client_sessions:
             self._client_sessions[ws].discard(msg.session_id)
-        await ws.send(make_shell_closed(msg.session_id).to_json())
+        if closed:
+            await ws.send(make_shell_closed(msg.session_id).to_json())
+        else:
+            await ws.send(make_error(f"Session {msg.session_id} not found", msg.session_id).to_json())
 
     async def _handle_list(self, ws: ServerConnection, msg: Message) -> None:
         """List all shell sessions."""

@@ -97,6 +97,10 @@ class DashboardServer:
                 if not target_uri:
                     await ws.close(1008, "Missing target URI")
                     return
+                valid_uris = {p["uri"] for p in get_peers()}
+                if target_uri not in valid_uris:
+                    await ws.close(1008, "Unknown target")
+                    return
             except Exception:
                 await ws.close(1008, "Invalid init message")
                 return
@@ -140,6 +144,7 @@ class DashboardServer:
             self._host,
             self._port,
             process_request=process_request,
+            max_size=1_048_576,
         )
 
         url = f"http://{self._host}:{self._port}"

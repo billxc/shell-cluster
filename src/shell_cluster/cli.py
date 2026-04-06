@@ -197,10 +197,10 @@ def config(key: str | None, value: str | None) -> None:
     else:
         # Set value — coerce type
         current = getattr(section_obj, field)
-        if isinstance(current, int):
-            value = int(value)
-        elif isinstance(current, bool):
+        if isinstance(current, bool):
             value = value.lower() in ("true", "1", "yes")
+        elif isinstance(current, int):
+            value = int(value)
         setattr(section_obj, field, value)
         save_config(cfg)
         console.print(f"[green]{key} = {value!r}[/green]")

@@ -50,7 +50,11 @@ class ShellManager:
         on_exit: OnExitCallback | None = None,
     ) -> ShellSession:
         """Create a new PTY shell session."""
+        import shutil
+
         shell_cmd = shell or self._default_shell
+        if not shutil.which(shell_cmd):
+            raise FileNotFoundError(f"Shell binary not found: {shell_cmd}")
 
         if IS_WINDOWS:
             session = await self._create_windows(session_id, shell_cmd, cols, rows)
@@ -176,11 +180,11 @@ class ShellManager:
 
     # ── Write (cross-platform) ──────────────────────────────────────
 
-    async def write(self, session_id: str, data: bytes) -> None:
-        """Write data to a shell session's PTY."""
+    async def write(self, session_id: str, data: bytes) -> bool:
+        """Write data to a shell session's PTY. Returns False if session not found."""
         session = self._sessions.get(session_id)
         if not session:
-            return
+            return False
         try:
             if IS_WINDOWS:
                 session._handle.write(data.decode("utf-8", errors="replace"))
@@ -189,6 +193,8 @@ class ShellManager:
         except OSError as e:
             log.warning("Failed to write to session %s: %s (handle=%r, pid=%d)",
                         session_id, e, session._handle, session.pid)
+            return False
+        return True
 
     def attach(
         self,
@@ -251,11 +257,11 @@ class ShellManager:
         except ChildProcessError:
             pass
 
-    async def close(self, session_id: str) -> None:
-        """Close a shell session."""
+    async def close(self, session_id: str) -> bool:
+        """Close a shell session. Returns False if session not found."""
         session = self._sessions.pop(session_id, None)
         if not session:
-            return
+            return False
 
         # Cancel reader task
         reader = self._readers.pop(session_id, None)
@@ -284,6 +290,7 @@ class ShellManager:
             pass
 
         log.info("Closed shell session %s", session_id)
+        return True
 
     async def close_all(self) -> None:
         """Close all sessions."""

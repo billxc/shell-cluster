@@ -19,7 +19,7 @@ from shell_cluster.web.server import DashboardServer
 
 log = logging.getLogger(__name__)
 
-DISCOVERY_INTERVAL = 30  # seconds
+DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
 HEALTH_CHECK_INTERVAL = 10  # seconds
 
 # Track child PIDs globally so atexit can clean them up
@@ -118,6 +118,12 @@ class Daemon:
 
         return peers
 
+    async def _refresh_peers(self) -> None:
+        """Trigger an immediate discovery refresh."""
+        if self._discovery:
+            peers = await self._discovery.refresh()
+            await self._on_peers_changed(peers)
+
     async def start(self) -> None:
         """Start all components."""
         log.info("Starting daemon for node '%s'", self._config.node.name)
@@ -169,6 +175,7 @@ class Daemon:
             port=self._config.node.dashboard_port,
             no_open=self._no_open,
             get_peers=self._get_peers_for_dashboard,
+            refresh_peers=self._refresh_peers,
         )
         await self._dashboard.start()
 

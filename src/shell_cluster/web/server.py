@@ -11,7 +11,7 @@ import json
 import logging
 import webbrowser
 from pathlib import Path
-from typing import Callable
+from typing import Awaitable, Callable
 
 from websockets.asyncio.server import ServerConnection
 import websockets
@@ -30,11 +30,13 @@ class DashboardServer:
         port: int = 9000,
         no_open: bool = False,
         get_peers: Callable[[], list[dict]] | None = None,
+        refresh_peers: Callable[[], Awaitable[None]] | None = None,
     ):
         self._host = host
         self._port = port
         self._no_open = no_open
         self._get_peers = get_peers or (lambda: [])
+        self._refresh_peers = refresh_peers
         self._server = None
         self._index_html: str | None = None
 
@@ -49,6 +51,7 @@ class DashboardServer:
         """Start the dashboard server."""
         index_html = self._build_index_html()
         get_peers = self._get_peers
+        refresh_peers = self._refresh_peers
 
         async def process_request(connection, request):
             """Serve static files and API for non-WebSocket requests."""
@@ -61,6 +64,21 @@ class DashboardServer:
             if path == "/api/peers":
                 peers_json = json.dumps(get_peers())
                 response = connection.respond(200, peers_json)
+                response.headers["Content-Type"] = "application/json"
+                return response
+
+            # API: trigger discovery refresh
+            if path == "/api/refresh-peers":
+                if refresh_peers:
+                    try:
+                        await refresh_peers()
+                        body = json.dumps({"ok": True})
+                    except Exception as e:
+                        log.warning("Refresh peers failed: %s", e)
+                        body = json.dumps({"ok": False, "error": "refresh failed"})
+                else:
+                    body = json.dumps({"ok": False, "error": "discovery not available"})
+                response = connection.respond(200, body)
                 response.headers["Content-Type"] = "application/json"
                 return response
 

@@ -295,6 +295,7 @@ body {
   <div id="peer-list"></div>
   <div id="sidebar-footer">
     <button id="btn-refresh" onclick="refreshAll()">&#x21bb; Refresh</button>
+    <button id="btn-discover" onclick="discoverPeers()">&#x1F50D; Discover</button>
   </div>
 </div>
 
@@ -380,6 +381,27 @@ async function refreshAll() {
   } finally {
     btn.disabled = false;
     btn.textContent = '\u21bb Refresh';
+  }
+}
+
+// --- Trigger discovery refresh (calls tunnel API, slower) ---
+async function discoverPeers() {
+  if (!confirm('This will query the tunnel API to discover new peers. Continue?')) return;
+  const btn = document.getElementById('btn-discover');
+  btn.disabled = true;
+  btn.textContent = '... Discovering';
+  try {
+    const resp = await fetch('/api/refresh-peers');
+    const data = await resp.json();
+    if (data.ok) {
+      await fetchPeers();
+      await fetchSessions();
+    }
+  } catch (e) {
+    console.warn('Discovery failed:', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '\uD83D\uDD0D Discover';
   }
 }
 

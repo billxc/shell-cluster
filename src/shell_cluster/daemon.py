@@ -131,6 +131,19 @@ class Daemon:
         """Start all components."""
         log.info("Starting daemon for node '%s'", self._config.node.name)
 
+        # Fail fast: check dashboard port before slow tunnel/discovery work
+        if not self._no_dashboard:
+            import socket
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("127.0.0.1", self._config.node.dashboard_port))
+                except OSError:
+                    raise RuntimeError(
+                        f"Dashboard port {self._config.node.dashboard_port} is already in use. "
+                        f"Stop the other process or change the port with: "
+                        f"shellcluster config node.dashboard_port <port>"
+                    )
+
         # Register signal handlers
         if sys.platform != "win32":
             loop = asyncio.get_event_loop()

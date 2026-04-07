@@ -174,6 +174,8 @@ def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool, no
         asyncio.run(daemon.run_forever())
     except KeyboardInterrupt:
         pass
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
 
 
 @main.command()

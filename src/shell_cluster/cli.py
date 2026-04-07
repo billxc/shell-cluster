@@ -147,7 +147,8 @@ def _ensure_registered() -> Config:
 @click.option("--port", default=None, type=int, help="Shell server port (required for --no-tunnel)")
 @click.option("--no-open", is_flag=True, help="Don't auto-open browser")
 @click.option("--show-self", is_flag=True, help="Show this node's sessions in dashboard")
-def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool, show_self: bool) -> None:
+@click.option("--no-dashboard", is_flag=True, help="Don't start dashboard server")
+def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool, show_self: bool, no_dashboard: bool) -> None:
     """Start the daemon (tunnel + shell server + discovery + dashboard)."""
     from shell_cluster.daemon import Daemon
 
@@ -169,7 +170,7 @@ def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool, sh
     console.print(
         f"Starting daemon for [bold]{config.node.name}[/bold] (mode={mode})..."
     )
-    daemon = Daemon(config, no_tunnel=no_tunnel, local_port=port, no_open=no_open, show_self=show_self)
+    daemon = Daemon(config, no_tunnel=no_tunnel, local_port=port, no_open=no_open, show_self=show_self, no_dashboard=no_dashboard or not config.node.dashboard)
     try:
         asyncio.run(daemon.run_forever())
     except KeyboardInterrupt:

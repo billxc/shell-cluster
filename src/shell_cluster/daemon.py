@@ -41,10 +41,11 @@ atexit.register(_cleanup_children)
 class Daemon:
     """Main daemon that manages tunnel, shell server, discovery, and dashboard."""
 
-    def __init__(self, config: Config, no_tunnel: bool = False, local_port: int | None = None, no_open: bool = False, show_self: bool = False):
+    def __init__(self, config: Config, no_tunnel: bool = False, local_port: int | None = None, no_open: bool = False, show_self: bool = False, no_dashboard: bool = False):
         self._config = config
         self._no_tunnel = no_tunnel
         self._no_open = no_open
+        self._no_dashboard = no_dashboard
         self._show_self = show_self
         self._tunnel_backend = None
         self._shell_manager = ShellManager(config.get_shell_command())
@@ -170,22 +171,24 @@ class Daemon:
             await self._server.start()
 
         # Start dashboard server (peers are already loaded)
-        self._dashboard = DashboardServer(
-            host="127.0.0.1",
-            port=self._config.node.dashboard_port,
-            no_open=self._no_open,
-            get_peers=self._get_peers_for_dashboard,
-            refresh_peers=self._refresh_peers,
-        )
-        await self._dashboard.start()
+        if not self._no_dashboard:
+            self._dashboard = DashboardServer(
+                host="127.0.0.1",
+                port=self._config.node.dashboard_port,
+                no_open=self._no_open,
+                get_peers=self._get_peers_for_dashboard,
+                refresh_peers=self._refresh_peers,
+            )
+            await self._dashboard.start()
 
         mode = "local" if self._no_tunnel else f"tunnel={self._tunnel_id}"
+        dashboard_info = f"dashboard={self._config.node.dashboard_port}" if not self._no_dashboard else "dashboard=off"
         log.info(
-            "Daemon running: node=%s, %s, shell=%d, dashboard=%d",
+            "Daemon running: node=%s, %s, shell=%d, %s",
             self._config.node.name,
             mode,
             self._server.port,
-            self._config.node.dashboard_port,
+            dashboard_info,
         )
 
     async def _on_peers_changed(self, peers: list) -> None:

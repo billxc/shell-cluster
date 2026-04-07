@@ -316,33 +316,15 @@ class Daemon:
         self._stopping = True
         log.info("Stopping daemon...")
 
+        # Cancel background loops first (non-blocking)
         if self._discovery:
             self._discovery.stop()
         if self._discovery_task:
             self._discovery_task.cancel()
-            try:
-                await asyncio.wait_for(self._discovery_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
         if self._health_check_task:
             self._health_check_task.cancel()
-            try:
-                await asyncio.wait_for(self._health_check_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
 
-        if self._dashboard:
-            try:
-                await asyncio.wait_for(self._dashboard.stop(), timeout=2.0)
-            except asyncio.TimeoutError:
-                log.warning("Dashboard stop timed out")
-
-        try:
-            await asyncio.wait_for(self._server.stop(), timeout=3.0)
-        except asyncio.TimeoutError:
-            log.warning("Shell server stop timed out")
-
-        # Kill tunnel connect processes
+        # Kill tunnel connect processes immediately (don't wait)
         for name, proc in self._tunnel_connect_procs.items():
             try:
                 proc.kill()
@@ -354,15 +336,26 @@ class Daemon:
         self._peer_uris.clear()
         self._peer_status.clear()
 
-        # Kill host process
+        # Kill host process immediately so run_forever() unblocks
         if self._host_process:
             try:
                 self._host_process.kill()
-                await asyncio.wait_for(self._host_process.wait(), timeout=2.0)
                 if self._host_process.pid:
                     _child_pids.discard(self._host_process.pid)
-            except (ProcessLookupError, asyncio.TimeoutError):
+            except ProcessLookupError:
                 pass
+
+        # Stop servers with short timeouts
+        if self._dashboard:
+            try:
+                await asyncio.wait_for(self._dashboard.stop(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+
+        try:
+            await asyncio.wait_for(self._server.stop(), timeout=2.0)
+        except asyncio.TimeoutError:
+            pass
 
         self._stop_event.set()
         log.info("Daemon stopped")

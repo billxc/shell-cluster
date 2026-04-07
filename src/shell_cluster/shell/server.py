@@ -27,11 +27,18 @@ from shell_cluster.shell.manager import ShellManager
 log = logging.getLogger(__name__)
 
 # Terminal query sequences that trigger a response from xterm.js.
-# If replayed, the response goes back to the shell as garbage input.
-# ESC[c / ESC[0c — Primary DA    ESC[>c / ESC[>0c — Secondary DA
-# ESC[=c — Tertiary DA            ESC[6n / ESC[?6n — Cursor position query
+# The response travels back through WebSocket as PTY input → garbage text.
+#
+# DA queries:   ESC[c ESC[>c ESC[=c ESC[0c — device attributes
+# CPR queries:  ESC[6n ESC[?6n — cursor position report
+# OSC queries:  ESC]10;? ESC]11;? ESC]12;? — fg/bg/cursor color queries
+#               Terminated by BEL (\x07) or ST (\x1b\\)
+# DECRQM:       ESC[?Np — request mode (ANSI/DEC)
 _TERMINAL_QUERY_RE = re.compile(
-    rb"\x1b\[[>?=]?[0-9]*[cn]"
+    rb"\x1b\[[>?=]?[0-9]*[cn]"           # DA + CPR
+    rb"|\x1b\]1[0-2];?\x07"              # OSC 10/11/12 with BEL
+    rb"|\x1b\]1[0-2];\?\x1b\\"           # OSC 10/11/12 with ST
+    rb"|\x1b\[\??[0-9]+\$p"              # DECRQM
 )
 
 
@@ -148,6 +155,9 @@ class ShellServer:
             return
 
         async def on_output(session_id: str, data: bytes) -> None:
+            data = _strip_terminal_queries(data)
+            if not data:
+                return
             out_msg = make_shell_data(session_id, data)
             await self._send_to_client(ws, out_msg)
 
@@ -183,6 +193,9 @@ class ShellServer:
         """Re-attach to an existing shell session."""
 
         async def on_output(session_id: str, data: bytes) -> None:
+            data = _strip_terminal_queries(data)
+            if not data:
+                return
             out_msg = make_shell_data(session_id, data)
             await self._send_to_client(ws, out_msg)
 

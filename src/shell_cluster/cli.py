@@ -90,6 +90,55 @@ def unregister() -> None:
     console.print("Done. Node unregistered.")
 
 
+def _check_devtunnel() -> bool:
+    """Check that devtunnel CLI is installed and logged in. Returns True if ok."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("devtunnel"):
+        console.print("[red]devtunnel CLI is not installed.[/red]")
+        console.print("Install it: https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/get-started")
+        return False
+
+    try:
+        result = subprocess.run(
+            ["devtunnel", "list", "--limit", "1"],
+            capture_output=True, timeout=10,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode().strip()
+            if "login" in stderr.lower() or "sign in" in stderr.lower() or "unauthorized" in stderr.lower():
+                console.print("[red]devtunnel is not logged in.[/red]")
+                console.print("Run: [bold]devtunnel user login[/bold]")
+                return False
+            # Other errors — might still work, let it try
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]devtunnel login check timed out, proceeding anyway.[/yellow]")
+    except Exception:
+        pass
+
+    return True
+
+
+def _ensure_registered() -> Config:
+    """Ensure device is registered. Prompt for node name if not."""
+    from shell_cluster.config import CONFIG_FILE
+
+    if CONFIG_FILE.exists():
+        return load_config()
+
+    console.print("[yellow]No config found. Let's register this node.[/yellow]")
+    import socket
+    default_name = socket.gethostname()
+    name = click.prompt("Node name", default=default_name)
+
+    config = Config()
+    config.node.name = name
+    save_config(config)
+    console.print(f"[green]Registered node '{name}'[/green]")
+    return config
+
+
 @main.command()
 @click.option("--no-tunnel", is_flag=True, help="Local mode: no tunnel, direct WebSocket")
 @click.option("--name", default=None, help="Override node name")
@@ -105,7 +154,12 @@ def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool, sh
         console.print("Example: shellcluster start --no-tunnel --port 8765")
         return
 
-    config = load_config()
+    # Check devtunnel availability (unless local mode)
+    if not no_tunnel and not _check_devtunnel():
+        return
+
+    # Auto-register if needed
+    config = _ensure_registered()
     if name:
         config.node.name = name
 

@@ -347,20 +347,30 @@ class Daemon:
             except ProcessLookupError:
                 pass
 
+        # Kill all shell session child processes immediately
+        for session in self._shell_manager.sessions.values():
+            try:
+                os.kill(session.pid, 9)  # SIGKILL
+            except (ProcessLookupError, OSError):
+                pass
+
         # Stop servers with short timeouts
         if self._dashboard:
             try:
                 await asyncio.wait_for(self._dashboard.stop(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, Exception):
                 pass
 
         try:
-            await asyncio.wait_for(self._server.stop(), timeout=2.0)
-        except asyncio.TimeoutError:
+            await asyncio.wait_for(self._server.stop(), timeout=1.0)
+        except (asyncio.TimeoutError, Exception):
             pass
 
         self._stop_event.set()
         log.info("Daemon stopped")
+        # Force exit — PTY reader threads in run_in_executor can't be cancelled
+        _cleanup_children()
+        os._exit(0)
 
     async def run_forever(self) -> None:
         """Start and run until stopped."""

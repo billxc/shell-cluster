@@ -96,14 +96,13 @@ devtunnel user login
 
 Use the **same Microsoft account** on all machines.
 
-### 3. Register & start as a service (each machine)
+### 3. Start (each machine)
 
 ```bash
-shellcluster register --name my-macbook
-easy-service install shellcluster -- shellcluster start --no-open
+shellcluster start
 ```
 
-The daemon is now running in the background and will auto-start on login.
+On first run, if no config exists, you'll be prompted for a node name (defaults to hostname). The daemon checks that `devtunnel` is installed and logged in before starting.
 
 ### 4. Open Dashboard (any machine)
 
@@ -111,15 +110,15 @@ The daemon is now running in the background and will auto-start on login.
 shellcluster dashboard
 ```
 
-Opens your browser — left sidebar shows all discovered peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs.
+Opens your browser — left sidebar shows all discovered peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs. Use the **Discover** button to trigger an immediate peer refresh.
 
-### Run manually (without easy-service)
-
-If you prefer to run the daemon in the foreground:
+### Run as a background service (recommended)
 
 ```bash
-shellcluster start
+easy-service install shellcluster -- shellcluster start --no-open
 ```
+
+The daemon runs in the background and auto-starts on login.
 
 ## Why Decentralized?
 
@@ -136,11 +135,17 @@ shellcluster start
 
 | Command | Description |
 |---------|-------------|
+| `shellcluster start` | Start daemon (tunnel + shell server + discovery + dashboard) |
+| `shellcluster start --no-tunnel --port 8765` | Start in local mode (no tunnel) |
+| `shellcluster start --show-self` | Include this node's sessions in the dashboard |
+| `shellcluster start --no-open` | Don't auto-open browser on start |
 | `shellcluster register` | Register this machine to the cluster |
 | `shellcluster unregister` | Remove this machine from the cluster |
-| `shellcluster start` | Start daemon (tunnel + shell server + discovery) |
 | `shellcluster peers` | List discovered peers |
+| `shellcluster config` | Show config path and all values |
+| `shellcluster config <key> [value]` | Get or set a config value (e.g. `node.name`) |
 | `shellcluster dashboard` | Open web dashboard |
+| `--version` | Show version and git hash |
 | `-v` / `--verbose` | Enable debug logging |
 
 ## Configuration
@@ -155,14 +160,11 @@ shellcluster start
 [node]
 name = "my-macbook"        # Node name, shown in peers and dashboard
 label = "shellcluster"     # Tunnel label — same label = same cluster
-port = 8765                # WebSocket port (local mode only)
+dashboard_port = 9000      # Dashboard HTTP server port
 
 [tunnel]
 backend = "devtunnel"      # Tunnel backend
 expiration = "8h"          # Tunnel auto-expiration
-
-[discovery]
-interval_seconds = 30      # Peer refresh interval (seconds)
 
 [shell]
 command = ""               # Default shell (empty = auto-detect)
@@ -223,10 +225,13 @@ manager.status("shellcluster")  # check status
 - [x] Windows support (winpty/conpty)
 - [x] Local mode (no tunnel)
 - [x] MS Dev Tunnel backend
-- [ ] E2E encryption
 - [x] Web Dashboard (xterm.js)
-- [ ] File transfer
+- [x] Session reconnect with scrollback replay
+- [x] Server-side health checks (HTTP ping every 10s)
+- [x] Auto-register on first start
 - [x] [easy-service](https://github.com/billxc/easy-service) integration for system service registration
+- [ ] E2E encryption
+- [ ] File transfer
 
 ## License
 

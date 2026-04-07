@@ -84,14 +84,13 @@ devtunnel user login
 
 所有机器使用 **同一个微软账号**。
 
-### 3. 注册并安装为服务（每台机器）
+### 3. 启动（每台机器）
 
 ```bash
-shellcluster register --name my-macbook
-easy-service install shellcluster -- shellcluster start --no-open
+shellcluster start
 ```
 
-daemon 现在在后台运行，登录后会自动启动。
+首次启动时，如果没有配置文件，会提示输入节点名称（默认为主机名）。daemon 启动前会检查 `devtunnel` 是否安装和登录。
 
 ### 4. 打开 Dashboard（任意机器）
 
@@ -99,15 +98,15 @@ daemon 现在在后台运行，登录后会自动启动。
 shellcluster dashboard
 ```
 
-自动打开浏览器 —— 左侧显示所有发现的节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。
+自动打开浏览器 —— 左侧显示所有发现的节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。使用 **Discover** 按钮可立即触发节点刷新。
 
-### 手动运行（不使用 easy-service）
-
-如果你不想安装为服务，可以在前台运行：
+### 安装为后台服务（推荐）
 
 ```bash
-shellcluster start
+easy-service install shellcluster -- shellcluster start --no-open
 ```
+
+daemon 在后台运行，登录后自动启动。
 
 ## 为什么去中心化？
 
@@ -124,11 +123,17 @@ shellcluster start
 
 | 命令 | 说明 |
 |------|------|
+| `shellcluster start` | 启动 daemon（tunnel + shell server + discovery + dashboard） |
+| `shellcluster start --no-tunnel --port 8765` | 本地模式启动（不使用 tunnel） |
+| `shellcluster start --show-self` | 在 dashboard 中显示本机会话 |
+| `shellcluster start --no-open` | 启动时不自动打开浏览器 |
 | `shellcluster register` | 注册当前机器到 cluster |
 | `shellcluster unregister` | 从 cluster 移除当前机器 |
-| `shellcluster start` | 启动 daemon（tunnel + shell server + discovery） |
 | `shellcluster peers` | 列出已发现的节点 |
+| `shellcluster config` | 显示配置文件路径和所有值 |
+| `shellcluster config <key> [value]` | 查看或设置配置值（如 `node.name`） |
 | `shellcluster dashboard` | 打开 Web 管理面板 |
+| `--version` | 显示版本和 git hash |
 | `-v` / `--verbose` | 开启调试日志 |
 
 ## 配置文件
@@ -143,14 +148,11 @@ shellcluster start
 [node]
 name = "my-macbook"        # 节点名称，显示在 peers 和 dashboard 中
 label = "shellcluster"     # Tunnel 标签 —— 相同标签 = 同一个 cluster
-port = 8765                # WebSocket 端口（仅本地模式）
+dashboard_port = 9000      # Dashboard HTTP 服务端口
 
 [tunnel]
 backend = "devtunnel"      # Tunnel 后端
 expiration = "8h"          # Tunnel 自动过期时间
-
-[discovery]
-interval_seconds = 30      # 节点刷新间隔（秒）
 
 [shell]
 command = ""               # 默认 shell（留空 = 自动检测）
@@ -211,10 +213,13 @@ manager.status("shellcluster")  # 查看状态
 - [x] Windows 支持（winpty/conpty）
 - [x] 本地模式（无 tunnel）
 - [x] MS Dev Tunnel 后端
-- [ ] E2E 加密
 - [x] Web Dashboard（xterm.js）
-- [ ] 文件传输
+- [x] 会话重连 + 滚动缓冲区回放
+- [x] 服务端健康检查（每 10 秒 HTTP ping）
+- [x] 首次启动自动注册
 - [x] 与 [easy-service](https://github.com/billxc/easy-service) 集成，注册为系统服务
+- [ ] E2E 加密
+- [ ] 文件传输
 
 ## License
 

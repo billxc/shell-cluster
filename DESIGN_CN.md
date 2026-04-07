@@ -86,11 +86,14 @@ Shell 层和 Tunnel 层 **零交叉导入**。
 - 管理多个并发 PTY 会话
 - 在 executor 线程中读取 → 异步回调输出/退出
 - `attach()`: 重新绑定回调，支持浏览器刷新后重连
+- **滚动缓冲区**: 每个会话 64KB 环形缓冲区（`deque`）；`shell.attach` 时回放，实现无缝重连
 
 ### 2. Shell Server（`shell/server.py`）
-- WebSocket 服务端（websockets 库，`0.0.0.0:<端口>`）
+- WebSocket 服务端（websockets 库，`127.0.0.1:<端口>`）
 - JSON 协议，终端数据 base64 编码
+- HTTP 端点: `GET /sessions` 返回会话列表（供健康检查和前端使用）
 - 客户端断连后会话保持（支持重连）
+- `shell.attach` 时回放滚动缓冲区，并过滤终端查询序列
 - 分发: `shell.create`, `shell.attach`, `shell.data`, `shell.resize`, `shell.close`, `shell.list`
 
 ### 3. 协议（`protocol.py`）
@@ -138,31 +141,42 @@ Shell 层和 Tunnel 层 **零交叉导入**。
 - 调用 `backend.list_tunnels(label)` 查找节点
 - 过滤 `hostConnections > 0`（只显示有 host 在运行的 tunnel）
 - 对每个新节点调用 `backend.get_port_and_uri()` 获取端口信息
+- 检测已在线节点的端口变化（两次发现周期间节点重启）
 - 通过 `parse_node_name()` 从 tunnel ID 提取节点名
-- 在 daemon 内以定时循环运行
+- 在 daemon 内以定时循环运行（5 分钟间隔）
 
 ### 6. Daemon（`daemon.py`）
 编排所有组件：
 ```
 start:
-  1. 绑定 WebSocket 服务（tunnel 模式随机端口，本地模式固定端口）
-  2. ensure_tunnel() + host()（仅 tunnel 模式）
-  3. 启动 discovery 循环（仅 tunnel 模式）
-  4. 注册 atexit 清理子进程
+  1. 检查 devtunnel 是否安装和登录（tunnel 模式）
+  2. 如果没有配置文件，自动注册（提示输入节点名）
+  3. 绑定 WebSocket 服务（tunnel 模式随机端口，本地模式固定端口）
+  4. ensure_tunnel() + host()（仅 tunnel 模式）
+  5. 启动 discovery 循环（5 分钟间隔，仅 tunnel 模式）
+  6. 启动健康检查循环（10 秒 HTTP ping 各节点的 /sessions）
+  7. 启动 dashboard 服务 (:9000)
+  8. 注册 atexit 清理子进程
 
 stop:
-  1. 停止 discovery
-  2. 停止 WebSocket 服务
-  3. 杀掉 devtunnel host 进程
-  4. 保留 tunnel（依赖过期机制清理）
+  1. 停止 discovery + 健康检查
+  2. 停止 dashboard 服务
+  3. 停止 WebSocket 服务
+  4. 杀掉 devtunnel connect 进程（节点连接）
+  5. 杀掉 devtunnel host 进程
+  6. 保留 tunnel（依赖过期机制清理）
 ```
 
+**健康检查循环**: 每 10 秒 HTTP GET 各连接节点的 `/sessions` 端点。当节点不可达时，杀掉对应的 `devtunnel connect` 进程，确保下次 discovery 刷新时能重新建立连接。
+
 ### 7. Web Dashboard（`web/server.py`, `web/static/index.html`）
-- Python: HTTP 服务（提供 HTML）+ WebSocket 代理
+- Python: HTTP 服务（提供 HTML）+ WebSocket 代理 + REST API（`/api/peers`, `/api/refresh-peers`）
 - HTML: 单页应用，xterm.js，Catppuccin 主题
 - 连接流程: 浏览器 → WS 代理 (:9000) → 初始化消息 → 代理连接 peer → 双向转发
-- 浏览器刷新后通过 `shell.attach` 恢复会话
-- 页面加载时查询每个 peer 的会话列表，显示可重连的会话
+- 浏览器刷新后通过 `shell.attach` 恢复会话 + 滚动缓冲区回放
+- 前端直接并发查询每个 peer 的 `/sessions` HTTP 端点（3 秒超时）
+- **Discover** 按钮触发即时 tunnel API 刷新（带确认对话框）
+- 自动刷新节点列表和会话（30 秒）
 
 ### 8. 配置（`config.py`）
 TOML 配置文件，平台特定路径：
@@ -173,7 +187,7 @@ TOML 配置文件，平台特定路径：
 | Linux | `~/.config/shell-cluster/config.toml` |
 | Windows | `%APPDATA%\shell-cluster\config.toml` |
 
-配置节: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
+配置节: `[node]`, `[tunnel]`, `[shell]`, `[[peers]]`
 
 ### 配置字段说明
 
@@ -182,15 +196,11 @@ TOML 配置文件，平台特定路径：
 name = "my-macbook"        # 节点名称，显示在 peers 列表和 dashboard 中
 # 默认为本机 hostname
 label = "shellcluster"     # Tunnel 标签 —— 相同标签的节点互相发现
-port = 8765                # 本地模式的 WebSocket 端口；tunnel 模式使用随机端口，此字段忽略
+dashboard_port = 9000      # Dashboard HTTP 服务端口
 
 [tunnel]
 backend = "devtunnel"      # Tunnel 后端（目前仅 "devtunnel"）
 expiration = "8h"          # Tunnel 过期时间，到期后云端自动清理
-
-[discovery]
-interval_seconds = 30      # daemon 运行时节点刷新间隔（秒）
-manual_peers = []          # 预留字段，暂未使用
 
 [shell]
 command = ""               # 默认 shell，留空 = 自动检测
@@ -216,18 +226,21 @@ command = ""               # 默认 shell，留空 = 自动检测
 3. 删除本地配置文件
 
 ### `shellcluster start`
-1. 加载配置
-2. 创建 `ShellManager`（使用默认 shell）
-3. 创建 `ShellServer`（端口 0 = 系统随机分配）
-4. 启动 WebSocket 服务 → 获取实际端口
-5. `ensure_tunnel()` — 检查 tunnel 是否存在，不存在则创建，端口变了则更新
-6. `devtunnel host` — 启动 tunnel host 子进程
-7. 启动 `PeerDiscovery` 循环（定期 `list_tunnels`）
-8. 注册 `atexit` 确保退出时杀掉 host 进程
-9. 永久等待（直到 Ctrl+C 或 host 进程退出）
+1. 检查 `devtunnel` 是否安装和登录（仅 tunnel 模式）
+2. 如果没有配置文件，自动注册（提示输入节点名）
+3. 加载配置
+4. 创建 `ShellManager`（使用默认 shell）
+5. 创建 `ShellServer`（端口 0 = 系统随机分配）
+6. 启动 WebSocket 服务 → 获取实际端口
+7. `ensure_tunnel()` — 检查 tunnel 是否存在，不存在则创建，端口变了则更新
+8. `devtunnel host` — 启动 tunnel host 子进程
+9. 启动 `PeerDiscovery` 循环（5 分钟间隔）
+10. 启动健康检查循环（10 秒 HTTP ping）
+11. 启动 dashboard 服务 (:9000)
+12. 永久等待（直到 Ctrl+C 或 host 进程退出）
 
 ### `shellcluster start --no-tunnel`
-同上但跳过步骤 5-7。服务绑定配置文件中的固定端口而非随机端口。
+同上但跳过步骤 1、7-10。服务绑定指定的固定端口而非随机端口。
 
 ### `shellcluster peers`
 1. 创建 `PeerDiscovery`（devtunnel 后端）
@@ -265,9 +278,9 @@ dashboard
 
 ### 会话重连（浏览器刷新）
 ```
-页面加载 → 查询每个 peer 的会话列表
+页面加载 → 并发查询每个 peer 的 /sessions HTTP 端点
         → 在侧边栏显示远程会话（↻ 图标）
-        → 用户点击 → shell.attach → 重新绑定回调 → 恢复
+        → 用户点击 → shell.attach → 滚动缓冲区回放 (64KB) → 恢复
 ```
 
 ## 设计决策
@@ -280,6 +293,8 @@ dashboard
 6. **Tunnel 复用** — `ensure_tunnel()` 避免 daemon 重启时昂贵的重建
 7. **`shellcluster-<名称>-shellcluster` 命名** — 可靠的节点名提取
 8. **Shell/Tunnel 层分离** — 零交叉导入，随时可加新后端
+9. **服务端健康检查** — daemon 通过 HTTP 检查节点状态，而非前端；发现不可达时杀掉旧连接确保干净重连
+10. **滚动缓冲区回放 + 查询序列过滤** — 回放前移除终端 DA/DSR 查询序列，防止回显乱码
 
 ## 依赖
 
@@ -300,6 +315,9 @@ dashboard
 - [x] MS Dev Tunnel 后端
 - [x] Web Dashboard（xterm.js）
 - [x] 会话持久化（shell.attach）
+- [x] 重连时滚动缓冲区回放（64KB 环形缓冲区）
+- [x] 服务端健康检查（HTTP ping）
+- [x] 首次启动自动注册
+- [x] 系统服务集成（easy-service）
 - [ ] E2E 加密
 - [ ] 文件传输
-- [x] 系统服务集成（easy-service）

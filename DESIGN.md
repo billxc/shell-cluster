@@ -86,11 +86,14 @@ Shell layer and tunnel layer have **zero cross-imports**.
 - Manages multiple concurrent PTY sessions
 - Read loop in executor thread → async callbacks for output/exit
 - `attach()`: re-bind callbacks for session reconnect after browser refresh
+- **Scrollback buffer**: 64KB ring buffer (`deque`) per session; replayed on `shell.attach` for seamless reconnect
 
 ### 2. Shell Server (`shell/server.py`)
-- WebSocket server (websockets library, `0.0.0.0:<port>`)
+- WebSocket server (websockets library, `127.0.0.1:<port>`)
 - JSON protocol with base64-encoded terminal data
+- HTTP endpoint: `GET /sessions` returns session list (used by health checks and frontend)
 - Sessions persist across client disconnects (for reconnect)
+- On `shell.attach`: replays scrollback buffer with terminal query sequences stripped
 - Dispatches: `shell.create`, `shell.attach`, `shell.data`, `shell.resize`, `shell.close`, `shell.list`
 
 ### 3. Protocol (`protocol.py`)
@@ -138,31 +141,42 @@ Abstract `TunnelBackend` protocol with concrete `DevTunnelBackend`:
 - Calls `backend.list_tunnels(label)` to find peers
 - Filters by `hostConnections > 0` (only actively hosted tunnels)
 - Calls `backend.get_port_and_uri()` for each new peer
+- Detects port changes on already-online peers (peer restart between cycles)
 - Extracts node name from tunnel ID via `parse_node_name()`
-- Periodic refresh loop when running inside daemon
+- Periodic refresh loop (5-minute interval) when running inside daemon
 
 ### 6. Daemon (`daemon.py`)
 Orchestrates all components:
 ```
 start:
-  1. Bind WebSocket server (random port in tunnel mode, fixed in local mode)
-  2. ensure_tunnel() + host() (tunnel mode only)
-  3. Start discovery loop (tunnel mode only)
-  4. Register atexit handler to kill child processes
+  1. Check devtunnel is installed and logged in (tunnel mode)
+  2. Auto-register if no config exists (prompt for node name)
+  3. Bind WebSocket server (random port in tunnel mode, fixed in local mode)
+  4. ensure_tunnel() + host() (tunnel mode only)
+  5. Start discovery loop (5-minute interval, tunnel mode only)
+  6. Start health check loop (10-second HTTP ping to each peer's /sessions)
+  7. Start dashboard server (:9000)
+  8. Register atexit handler to kill child processes
 
 stop:
-  1. Stop discovery
-  2. Stop WebSocket server
-  3. Kill devtunnel host process
-  4. Keep tunnel alive for fast restart
+  1. Stop discovery + health check
+  2. Stop dashboard server
+  3. Stop WebSocket server
+  4. Kill devtunnel connect processes (peer connections)
+  5. Kill devtunnel host process
+  6. Keep tunnel alive for fast restart
 ```
 
+**Health check loop**: Every 10 seconds, HTTP GET to each connected peer's `/sessions` endpoint. When a peer becomes unreachable, kills its `devtunnel connect` process so the next discovery refresh will re-establish the connection.
+
 ### 7. Web Dashboard (`web/server.py`, `web/static/index.html`)
-- Python: HTTP server (serves HTML) + WebSocket proxy
+- Python: HTTP server (serves HTML) + WebSocket proxy + REST API (`/api/peers`, `/api/refresh-peers`)
 - HTML: Single page with xterm.js, Catppuccin theme
 - Connection: browser → WS proxy (:9000) → init message → proxy connects to peer → bidirectional relay
-- Sessions persist across browser refresh via `shell.attach`
-- Frontend queries each peer's session list on load, shows reconnectable sessions
+- Sessions persist across browser refresh via `shell.attach` with scrollback replay
+- Frontend queries each peer's `/sessions` HTTP endpoint directly (parallel, with 3s timeout)
+- **Discover** button triggers immediate tunnel API refresh (with confirmation dialog)
+- Periodic auto-refresh of peer list and sessions (30s)
 
 ### 8. Config (`config.py`)
 TOML config at platform-specific path:
@@ -173,7 +187,7 @@ TOML config at platform-specific path:
 | Linux | `~/.config/shell-cluster/config.toml` |
 | Windows | `%APPDATA%\shell-cluster\config.toml` |
 
-Sections: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
+Sections: `[node]`, `[tunnel]`, `[shell]`, `[[peers]]`
 
 ### Config fields
 
@@ -181,15 +195,11 @@ Sections: `[node]`, `[tunnel]`, `[discovery]`, `[shell]`, `[[peers]]`
 [node]
 name = "my-macbook"        # Node name, shown in peers list and dashboard
 label = "shellcluster"     # Tunnel label — same label = same cluster
-port = 8765                # WebSocket port for local mode; tunnel mode uses random port
+dashboard_port = 9000      # Dashboard HTTP server port
 
 [tunnel]
 backend = "devtunnel"      # Tunnel backend ("devtunnel" for now)
 expiration = "8h"          # Tunnel expiration (cloud auto-cleanup)
-
-[discovery]
-interval_seconds = 30      # Peer list refresh interval (seconds) when daemon is running
-manual_peers = []          # Reserved, not used yet
 
 [shell]
 command = ""               # Default shell. Empty = auto-detect
@@ -215,18 +225,21 @@ command = ""               # Default shell. Empty = auto-detect
 3. Delete local config file
 
 ### `shellcluster start`
-1. Load config
-2. Create `ShellManager` with default shell
-3. Create `ShellServer` (port 0 = random)
-4. Start WebSocket server → get actual port
-5. `ensure_tunnel()` — check if tunnel exists, create if not, update port if changed
-6. `devtunnel host` — start tunnel host subprocess
-7. Start `PeerDiscovery` loop (periodic `list_tunnels`)
-8. Register `atexit` to kill host process on exit
-9. Wait forever (until Ctrl+C or host process exit)
+1. Check `devtunnel` is installed and logged in (tunnel mode only)
+2. Auto-register if no config exists (prompt for node name)
+3. Load config
+4. Create `ShellManager` with default shell
+5. Create `ShellServer` (port 0 = random)
+6. Start WebSocket server → get actual port
+7. `ensure_tunnel()` — check if tunnel exists, create if not, update port if changed
+8. `devtunnel host` — start tunnel host subprocess
+9. Start `PeerDiscovery` loop (5-minute interval)
+10. Start health check loop (10-second HTTP ping to peers)
+11. Start dashboard server (:9000)
+12. Wait forever (until Ctrl+C or host process exit)
 
 ### `shellcluster start --no-tunnel`
-Same as above but skip steps 5-7. Server binds to configured port instead of random.
+Same as above but skip steps 1, 7-10. Server binds to specified port instead of random.
 
 ### `shellcluster peers`
 1. Create `PeerDiscovery` with devtunnel backend
@@ -264,9 +277,9 @@ dashboard
 
 ### Session reconnect (browser refresh)
 ```
-page load → query each peer's session list
+page load → query each peer's /sessions HTTP endpoint (parallel)
          → show remote sessions in sidebar (↻ icon)
-         → user clicks → shell.attach → re-bind callbacks → resume
+         → user clicks → shell.attach → scrollback replay (64KB) → resume
 ```
 
 ## Design Decisions
@@ -279,6 +292,8 @@ page load → query each peer's session list
 6. **Tunnel reuse** — `ensure_tunnel()` avoids expensive re-creation on daemon restart
 7. **`shellcluster-<name>-shellcluster` naming** — reliable node name extraction from tunnel ID
 8. **Shell/tunnel layer separation** — zero cross-imports, ready for alternative backends
+9. **Server-side health checks** — daemon pings peers via HTTP, not frontend; kills stale connections for clean reconnect
+10. **Scrollback replay with query stripping** — terminal DA/DSR sequences removed before replay to prevent echo garbage
 
 ## Dependencies
 
@@ -299,6 +314,9 @@ page load → query each peer's session list
 - [x] MS Dev Tunnel backend
 - [x] Web Dashboard (xterm.js)
 - [x] Session persistence (shell.attach)
+- [x] Scrollback replay on reconnect (64KB ring buffer)
+- [x] Server-side health checks (HTTP ping)
+- [x] Auto-register on first start
+- [x] System service integration (easy-service)
 - [ ] E2E encryption
 - [ ] File transfer
-- [x] System service integration (easy-service)

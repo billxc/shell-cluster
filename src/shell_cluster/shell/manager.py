@@ -203,22 +203,44 @@ class ShellManager:
         on_output: OnOutputCallback,
         on_exit: OnExitCallback | None,
     ) -> ShellSession | None:
-        """Re-attach callbacks to an existing session (for reconnect)."""
+        """Re-attach callbacks to an existing session (for reconnect).
+
+        NOTE: Does NOT start the read loop. Caller must call
+        start_reader() after sending scrollback to avoid a race
+        where new PTY output arrives before the scrollback replay.
+        """
         session = self._sessions.get(session_id)
         if not session:
             return None
 
-        # Cancel old reader and start a new one with new callbacks
+        # Cancel old reader — new one started explicitly via start_reader()
         old_reader = self._readers.pop(session_id, None)
         if old_reader:
             old_reader.cancel()
 
+        # Stash callbacks for start_reader()
+        session._pending_on_output = on_output
+        session._pending_on_exit = on_exit
+
+        log.info("Re-attached to session %s (reader pending)", session_id)
+        return session
+
+    def start_reader(self, session_id: str) -> None:
+        """Start the read loop for a session after scrollback has been sent."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return
+        on_output = getattr(session, '_pending_on_output', None)
+        on_exit = getattr(session, '_pending_on_exit', None)
+        if not on_output:
+            return
         task = asyncio.create_task(
             self._read_loop(session, on_output, on_exit)
         )
         self._readers[session_id] = task
-        log.info("Re-attached to session %s", session_id)
-        return session
+        # Clean up stashed callbacks
+        session._pending_on_output = None
+        session._pending_on_exit = None
 
     # ── Resize (cross-platform) ─────────────────────────────────────
 

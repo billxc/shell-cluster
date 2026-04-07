@@ -204,6 +204,9 @@ class ShellServer:
                 scrollback = _strip_terminal_queries(scrollback)
                 replay_msg = make_shell_data(session.session_id, scrollback)
                 await ws.send(replay_msg.to_json())
+            # Start reader AFTER scrollback is sent to avoid race condition
+            # where new PTY output arrives before the replay
+            self._shell_manager.start_reader(msg.session_id)
         else:
             await ws.send(make_error(f"Session {msg.session_id} not found", msg.session_id).to_json())
 

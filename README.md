@@ -11,7 +11,7 @@ Decentralized remote shell access across all your machines. No central server re
 ```
 macOS (zsh)                Windows (PowerShell)         Linux (bash)
 ┌──────────────┐          ┌──────────────┐          ┌──────────────┐
-│ daemon :8765 │          │ daemon :8765 │          │ daemon :8765 │
+│    daemon    │          │    daemon    │          │    daemon    │
 └──────┬───────┘          └──────┬───────┘          └──────┬───────┘
        │                         │                         │
   ═════╪═════════ Tunnel (P2P, no server) ═════════════════╪═════

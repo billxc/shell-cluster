@@ -41,12 +41,11 @@ atexit.register(_cleanup_children)
 class Daemon:
     """Main daemon that manages tunnel, shell server, discovery, and dashboard."""
 
-    def __init__(self, config: Config, no_tunnel: bool = False, local_port: int | None = None, no_open: bool = False, show_self: bool = False, no_dashboard: bool = False):
+    def __init__(self, config: Config, no_tunnel: bool = False, local_port: int | None = None, no_open: bool = False, no_dashboard: bool = False):
         self._config = config
         self._no_tunnel = no_tunnel
         self._no_open = no_open
         self._no_dashboard = no_dashboard
-        self._show_self = show_self
         self._tunnel_backend = None
         self._shell_manager = ShellManager(config.get_shell_command())
         if not self._no_tunnel:
@@ -86,14 +85,13 @@ class Daemon:
         peers: list[dict] = []
         seen: set[str] = set()
 
-        # Self (only if --show-self)
-        if self._show_self:
-            self_uri = f"ws://localhost:{self._server.port}"
-            peers.append({
-                "name": self._config.node.name,
-                "uri": self_uri,
-                "status": "online",
-            })
+        # Self — always shown with (local) suffix
+        self_uri = f"ws://localhost:{self._server.port}"
+        peers.append({
+            "name": f"{self._config.node.name} (local)",
+            "uri": self_uri,
+            "status": "online",
+        })
         seen.add(self._config.node.name)
 
         # Config peers (manual)

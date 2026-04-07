@@ -102,13 +102,17 @@ class PeerDiscovery:
 
         return list(self._peers.values())
 
-    async def run_loop(self) -> None:
+    async def run_loop(self, skip_first: bool = False) -> None:
         """Run discovery in a loop, calling on_peers_changed when list changes."""
         self._running = True
+        first = True
         while self._running:
-            peers = await self.refresh()
-            if self._on_peers_changed:
-                await self._on_peers_changed(peers)
+            if first and skip_first:
+                first = False
+            else:
+                peers = await self.refresh()
+                if self._on_peers_changed:
+                    await self._on_peers_changed(peers)
             await asyncio.sleep(self._interval)
 
     def stop(self) -> None:

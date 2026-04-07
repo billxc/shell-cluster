@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 from urllib.error import URLError
 
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 
 DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
 HEALTH_CHECK_INTERVAL = 10  # seconds
+CONNECT_TIMEOUT = 15  # seconds — max wait for a single backend.connect()
 
 # Track child PIDs globally so atexit can clean them up
 _child_pids: set[int] = set()
@@ -28,7 +30,7 @@ _child_pids: set[int] = set()
 
 def _cleanup_children() -> None:
     """Kill any remaining child processes on exit."""
-    for pid in _child_pids:
+    for pid in list(_child_pids):
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -69,6 +71,8 @@ class Daemon:
         self._tunnel_connect_procs: dict[str, asyncio.subprocess.Process] = {}
         self._peer_uris: dict[str, str] = {}  # peer_name -> ws:// or wss:// URI
         self._peer_status: dict[str, str] = {}  # peer_name -> "online" | "offline"
+        self._peer_lock = asyncio.Lock()  # guards _peer_uris, _peer_status, _tunnel_connect_procs
+        self._health_pool = ThreadPoolExecutor(max_workers=4)  # dedicated pool for health pings
         self._health_check_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._stopping = False
@@ -151,7 +155,7 @@ class Daemon:
             if self._host_process.pid:
                 _child_pids.add(self._host_process.pid)
 
-            # Start discovery — do first refresh before opening browser
+            # Start discovery — first refresh happens inside run_loop
             backend = self._get_tunnel_backend()
             self._discovery = PeerDiscovery(
                 backend=backend,
@@ -161,9 +165,9 @@ class Daemon:
                 on_peers_changed=self._on_peers_changed,
             )
             log.info("Discovering peers...")
-            await self._discovery.refresh()
-            await self._on_peers_changed(list(self._discovery.peers.values()))
-            self._discovery_task = asyncio.create_task(self._discovery.run_loop())
+            peers = await self._discovery.refresh()
+            await self._on_peers_changed(peers)
+            self._discovery_task = asyncio.create_task(self._discovery.run_loop(skip_first=True))
             self._health_check_task = asyncio.create_task(self._health_check_loop())
         else:
             await self._server.start()
@@ -191,6 +195,10 @@ class Daemon:
 
     async def _on_peers_changed(self, peers: list) -> None:
         """Called when discovery finds new/lost peers. Manage devtunnel connect."""
+        async with self._peer_lock:
+            await self._on_peers_changed_locked(peers)
+
+    async def _on_peers_changed_locked(self, peers: list) -> None:
         backend = self._get_tunnel_backend()
         from shell_cluster.models import PeerStatus
         current_names = {p.name for p in peers if p.name != self._config.node.name and p.status == PeerStatus.ONLINE}
@@ -214,22 +222,25 @@ class Daemon:
                 # Already connected with correct port and process alive — skip
                 continue
 
-            # Tear down stale connection (port changed OR process died)
+            reason = "new peer"
             if existing_uri:
                 reason = "process died" if proc_dead else f"port changed ({existing_uri} -> {expected_uri})"
                 log.info("Peer %s: %s, reconnecting", peer.name, reason)
+
+            try:
+                proc, ws_uri = await asyncio.wait_for(
+                    backend.connect(peer.tunnel_id, peer.port),
+                    timeout=CONNECT_TIMEOUT,
+                )
+                # New connection succeeded — tear down old one now
                 old_proc = self._tunnel_connect_procs.pop(peer.name, None)
-                if old_proc:
+                if old_proc and old_proc.returncode is None:
                     try:
                         old_proc.kill()
                         if old_proc.pid:
                             _child_pids.discard(old_proc.pid)
                     except ProcessLookupError:
                         pass
-                self._peer_uris.pop(peer.name, None)
-
-            try:
-                proc, ws_uri = await backend.connect(peer.tunnel_id, peer.port)
                 if proc:
                     self._tunnel_connect_procs[peer.name] = proc
                     if proc.pid:
@@ -237,6 +248,8 @@ class Daemon:
                 self._peer_uris[peer.name] = ws_uri
                 self._peer_status[peer.name] = "online"
                 log.info("Mapped peer %s -> %s", peer.name, ws_uri)
+            except asyncio.TimeoutError:
+                log.warning("Timeout connecting to peer %s (tunnel=%s)", peer.name, peer.tunnel_id)
             except Exception as e:
                 log.warning("Failed to connect to peer %s: %s", peer.name, e)
 
@@ -257,31 +270,41 @@ class Daemon:
     async def _health_check_loop(self) -> None:
         """Periodically ping each peer's HTTP /sessions endpoint to check liveness.
 
-        When a peer becomes unreachable, kill its devtunnel connect process so
-        that the next refresh will re-establish the connection.
+        When a peer becomes unreachable, kill its devtunnel connect process and
+        trigger an immediate reconnect instead of waiting for the next discovery cycle.
         """
         loop = asyncio.get_event_loop()
         while not self._stopping:
-            peers_snapshot = dict(self._peer_uris)
-            for name, uri in peers_snapshot.items():
+            # Snapshot all peer dicts under lock to avoid races with _on_peers_changed
+            async with self._peer_lock:
+                uris_snapshot = dict(self._peer_uris)
+                status_snapshot = dict(self._peer_status)
+                procs_snapshot = dict(self._tunnel_connect_procs)
+
+            peers_to_reconnect: list[str] = []
+
+            for name, uri in uris_snapshot.items():
                 http_url = uri.replace("wss://", "https://").replace("ws://", "http://") + "/sessions"
                 try:
                     alive = await asyncio.wait_for(
-                        loop.run_in_executor(None, self._ping_peer, http_url),
+                        loop.run_in_executor(self._health_pool, self._ping_peer, http_url),
                         timeout=3.0,
                     )
                 except (asyncio.TimeoutError, Exception):
                     alive = False
 
-                old_status = self._peer_status.get(name, "online")
-                self._peer_status[name] = "online" if alive else "offline"
+                old_status = status_snapshot.get(name, "online")
 
-                # Peer went offline — kill stale connect process but keep state
-                # so peer stays visible in dashboard and _on_peers_changed
-                # detects proc_dead=True on next refresh to reconnect
+                # Update status under lock
+                async with self._peer_lock:
+                    # Re-check: peer may have been removed by _on_peers_changed
+                    if name in self._peer_uris:
+                        self._peer_status[name] = "online" if alive else "offline"
+
+                # Peer went offline — kill stale connect process and schedule reconnect
                 if not alive and old_status == "online":
                     log.info("Peer %s unreachable, killing connect process", name)
-                    proc = self._tunnel_connect_procs.get(name)
+                    proc = procs_snapshot.get(name)
                     if proc and proc.returncode is None:
                         try:
                             proc.kill()
@@ -289,6 +312,16 @@ class Daemon:
                                 _child_pids.discard(proc.pid)
                         except ProcessLookupError:
                             pass
+                    peers_to_reconnect.append(name)
+
+            # Trigger immediate reconnect for peers that went offline
+            if peers_to_reconnect and self._discovery and not self._stopping:
+                log.info("Triggering reconnect for: %s", ", ".join(peers_to_reconnect))
+                try:
+                    peers = await self._discovery.refresh()
+                    await self._on_peers_changed(peers)
+                except Exception as e:
+                    log.warning("Reconnect refresh failed: %s", e)
 
             await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
@@ -308,7 +341,16 @@ class Daemon:
             _cleanup_children()
             os._exit(1)
         self._stopping = True
-        asyncio.create_task(self.stop())
+        self._stop_task = asyncio.create_task(self._safe_stop())
+
+    async def _safe_stop(self) -> None:
+        """Wrapper around stop() that ensures _stop_event is always set."""
+        try:
+            await self.stop()
+        except Exception as e:
+            log.error("Error during stop: %s", e)
+        finally:
+            self._stop_event.set()
 
     async def stop(self) -> None:
         """Stop all components and clean up (with timeouts to avoid hanging)."""
@@ -347,8 +389,13 @@ class Daemon:
             except ProcessLookupError:
                 pass
 
-        # Kill all shell session child processes immediately
+        # Close PTY FDs first to unblock reader threads stuck in os.read(),
+        # then SIGKILL the shell child processes
         for session in self._shell_manager.sessions.values():
+            try:
+                os.close(session._handle)
+            except OSError:
+                pass
             try:
                 os.kill(session.pid, 9)  # SIGKILL
             except (ProcessLookupError, OSError):
@@ -366,11 +413,11 @@ class Daemon:
         except (asyncio.TimeoutError, Exception):
             pass
 
+        # Shut down health check thread pool
+        self._health_pool.shutdown(wait=False)
+
         self._stop_event.set()
         log.info("Daemon stopped")
-        # Force exit — PTY reader threads in run_in_executor can't be cancelled
-        _cleanup_children()
-        os._exit(0)
 
     async def run_forever(self) -> None:
         """Start and run until stopped."""
@@ -383,7 +430,7 @@ class Daemon:
         except asyncio.CancelledError:
             pass
         finally:
-            if not self._stopping:
+            if not self._stopped:
                 await self.stop()
             # Force exit — PTY reader threads may block normal shutdown
             _cleanup_children()

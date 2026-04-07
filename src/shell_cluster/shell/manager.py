@@ -105,6 +105,9 @@ class ShellManager:
             os.dup2(slave_fd, 2)
             if slave_fd > 2:
                 os.close(slave_fd)
+            # Close all inherited FDs (server sockets, other PTY masters, pipes)
+            # to prevent the child from holding them open after exec
+            os.closerange(3, os.sysconf("SC_OPEN_MAX"))
             os.execvpe(shell_cmd, [shell_cmd], env)
             os._exit(1)
 

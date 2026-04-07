@@ -275,18 +275,19 @@ class Daemon:
                 old_status = self._peer_status.get(name, "online")
                 self._peer_status[name] = "online" if alive else "offline"
 
-                # Peer went offline — kill stale connect process so refresh reconnects
+                # Peer went offline — kill stale connect process but keep state
+                # so peer stays visible in dashboard and _on_peers_changed
+                # detects proc_dead=True on next refresh to reconnect
                 if not alive and old_status == "online":
-                    log.info("Peer %s unreachable, killing stale connect process", name)
-                    proc = self._tunnel_connect_procs.pop(name, None)
-                    if proc:
+                    log.info("Peer %s unreachable, killing connect process", name)
+                    proc = self._tunnel_connect_procs.get(name)
+                    if proc and proc.returncode is None:
                         try:
                             proc.kill()
                             if proc.pid:
                                 _child_pids.discard(proc.pid)
                         except ProcessLookupError:
                             pass
-                    self._peer_uris.pop(name, None)
 
             await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 

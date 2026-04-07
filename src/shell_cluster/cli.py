@@ -25,7 +25,7 @@ def setup_logging(verbose: bool) -> None:
     # INFO: "connection rejected" on every HTTP request
     # ERROR: "opening handshake failed" when connections drop (normal during reconnect)
     if not verbose:
-        logging.getLogger("websockets").setLevel(logging.CRITICAL)
+        logging.getLogger("websockets").setLevel(logging.WARNING)
 
 
 def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:

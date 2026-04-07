@@ -62,14 +62,13 @@ class DevTunnelBackend:
         tunnel_id: str,
         port: int,
         label: str,
-        expiration: str = "8h",
+        expiration: str = "",
     ) -> TunnelInfo:
         """Create a tunnel and add a port."""
-        await self._run(
-            "create", tunnel_id,
-            "--labels", label,
-            "--expiration", expiration,
-        )
+        args = ["create", tunnel_id, "--labels", label]
+        if expiration:
+            args += ["--expiration", expiration]
+        await self._run(*args)
 
         await self._run("port", "create", tunnel_id, "-p", str(port))
 

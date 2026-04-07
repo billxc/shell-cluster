@@ -21,9 +21,11 @@ def setup_logging(verbose: bool) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    # websockets logs every HTTP request as "connection rejected" at INFO — too noisy
+    # websockets logs are too noisy for normal use:
+    # INFO: "connection rejected" on every HTTP request
+    # ERROR: "opening handshake failed" when connections drop (normal during reconnect)
     if not verbose:
-        logging.getLogger("websockets").setLevel(logging.WARNING)
+        logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 
 def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:

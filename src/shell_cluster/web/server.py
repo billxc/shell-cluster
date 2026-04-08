@@ -53,6 +53,12 @@ class DashboardServer:
         get_peers = self._get_peers
         refresh_peers = self._refresh_peers
 
+        def _add_cors(response, request):
+            """Allow CORS from localhost origins."""
+            origin = request.headers.get("Origin", "")
+            if origin and ("://localhost" in origin or "://127.0.0.1" in origin):
+                response.headers["Access-Control-Allow-Origin"] = origin
+
         async def process_request(connection, request):
             """Serve static files and API for non-WebSocket requests."""
             if request.headers.get("Upgrade", "").lower() == "websocket":
@@ -65,6 +71,7 @@ class DashboardServer:
                 peers_json = json.dumps(get_peers())
                 response = connection.respond(200, peers_json)
                 response.headers["Content-Type"] = "application/json"
+                _add_cors(response, request)
                 return response
 
             # API: trigger discovery refresh
@@ -80,6 +87,7 @@ class DashboardServer:
                     body = json.dumps({"ok": False, "error": "discovery not available"})
                 response = connection.respond(200, body)
                 response.headers["Content-Type"] = "application/json"
+                _add_cors(response, request)
                 return response
 
             if path == "/" or path == "/index.html":

@@ -316,13 +316,11 @@ function createSession(peer, existingSessionId) {
 
   const sessionId = existingSessionId || genId();
   const { cols, rows } = term;
-  // Build raw mode path with session params
-  const rawPath = isAttach
-    ? `/raw?attach=${sessionId}&cols=${cols}&rows=${rows}`
-    : `/raw?session=${sessionId}&cols=${cols}&rows=${rows}`;
-
-  // First WS goes to daemon proxy, which connects to the peer's /raw endpoint
-  const wsUrl = daemonWsUrl || `ws://${location.host}`;
+  // Connect directly to the peer's /raw endpoint — no proxy needed
+  const rawParams = isAttach
+    ? `attach=${sessionId}&cols=${cols}&rows=${rows}`
+    : `session=${sessionId}&cols=${cols}&rows=${rows}`;
+  const wsUrl = `${peer.uri}/raw?${rawParams}`;
   const ws = new WebSocket(wsUrl);
 
   const sessionState = {
@@ -332,11 +330,6 @@ function createSession(peer, existingSessionId) {
   sessions.set(tabId, sessionState);
 
   term.writeln(`\x1b[2m${isAttach ? 'Reconnecting' : 'Connecting'} to ${peer.name}...\x1b[0m`);
-
-  ws.onopen = () => {
-    // Tell proxy to connect to the peer's /raw endpoint
-    ws.send(JSON.stringify({ target: peer.uri, path: rawPath }));
-  };
 
   let attached = false;
 

@@ -67,7 +67,10 @@ class ShellServer:
 
         async def process_request(connection, request):
             """Handle HTTP requests (non-WebSocket)."""
-            if request.headers.get("Upgrade", "").lower() == "websocket":
+            if (
+                request.headers.get("Upgrade", "").lower() == "websocket"
+                and "upgrade" in request.headers.get("Connection", "").lower()
+            ):
                 return None
 
             if request.path == "/sessions":
@@ -180,7 +183,7 @@ class ShellServer:
                     # Binary frame = PTY input
                     await self._shell_manager.write(session_id, frame)
                 else:
-                    # Text frame = JSON control message
+                    # Text frame — try JSON control, otherwise treat as PTY input
                     try:
                         ctrl = json.loads(frame)
                         if ctrl.get("type") == "shell.resize":
@@ -192,8 +195,12 @@ class ShellServer:
                         elif ctrl.get("type") == "shell.close":
                             await self._shell_manager.close(session_id)
                             break
-                    except json.JSONDecodeError:
-                        pass
+                        else:
+                            # Unknown JSON — treat as PTY input
+                            await self._shell_manager.write(session_id, frame.encode())
+                    except (json.JSONDecodeError, AttributeError):
+                        # Not JSON — plain text PTY input (from addon-attach)
+                        await self._shell_manager.write(session_id, frame.encode())
         except websockets.ConnectionClosed:
             pass
         finally:

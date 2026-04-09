@@ -20,7 +20,8 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 class NodeConfig:
     name: str = field(default_factory=socket.gethostname)  # Node name, shown in peers/dashboard
     label: str = "shellcluster"  # Tunnel label for peer discovery (same label = same cluster)
-    dashboard_port: int = 9000  # Dashboard HTTP server port
+    dashboard_port: int = 9000  # Dashboard HTTP server port (API + WS proxy)
+    dashboard_v2_port: int = 9001  # Dashboard v2 static server port (new UI)
     dashboard: bool = True  # Start dashboard server on daemon startup
 
 

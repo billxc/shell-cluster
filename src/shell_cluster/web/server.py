@@ -58,11 +58,22 @@ class DashboardServer:
             origin = request.headers.get("Origin", "")
             if origin and ("://localhost" in origin or "://127.0.0.1" in origin):
                 response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
 
         async def process_request(connection, request):
             """Serve static files and API for non-WebSocket requests."""
-            if request.headers.get("Upgrade", "").lower() == "websocket":
+            if (
+                request.headers.get("Upgrade", "").lower() == "websocket"
+                and "upgrade" in request.headers.get("Connection", "").lower()
+            ):
                 return None
+
+            # Handle CORS preflight
+            if request.method == "OPTIONS":
+                response = connection.respond(204, "")
+                _add_cors(response, request)
+                return response
 
             path = request.path
 

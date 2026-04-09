@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 shellcluster = "shell_cluster.cli:main"
+shell-dashboard = "shell_cluster.dashboard_v2.server:main"
 
 [build-system]
 requires = ["hatchling"]

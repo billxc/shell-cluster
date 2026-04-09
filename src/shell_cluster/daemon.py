@@ -12,18 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 from urllib.error import URLError
 
-import threading
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from pathlib import Path
-
 from shell_cluster.config import Config
 from shell_cluster.tunnel.discovery import PeerDiscovery
 from shell_cluster.shell.server import ShellServer
 from shell_cluster.shell.manager import ShellManager
 from shell_cluster.web.server import DashboardServer
-
-# shell-dashboard static dir (new UI)
-_DASHBOARD_V2_STATIC = Path(__file__).parent.parent / "shell-dashboard" / "static"
 
 log = logging.getLogger(__name__)
 
@@ -81,8 +74,7 @@ class Daemon:
         self._peer_lock = asyncio.Lock()  # guards _peer_uris, _peer_status, _tunnel_connect_procs
         self._health_pool = ThreadPoolExecutor(max_workers=4)  # dedicated pool for health pings
         self._health_check_task: asyncio.Task | None = None
-        self._dashboard_v2_server: HTTPServer | None = None
-        self._dashboard_v2_thread: threading.Thread | None = None
+        self._dashboard_v2_proc: asyncio.subprocess.Process | None = None
         self._stop_event = asyncio.Event()
         self._stopping = False
         self._stopped = False
@@ -136,54 +128,49 @@ class Daemon:
             peers = await self._discovery.refresh()
             await self._on_peers_changed(peers)
 
-    def _start_dashboard_v2(self) -> None:
-        """Start the dashboard v2 static HTTP server in a background thread."""
-        static_dir = _DASHBOARD_V2_STATIC
-        if not static_dir.is_dir():
-            log.warning("Dashboard v2 static dir not found: %s", static_dir)
-            return
-
-        class Handler(SimpleHTTPRequestHandler):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, directory=str(static_dir), **kwargs)
-
-            def log_message(self, fmt, *args):
-                log.debug(fmt, *args)
-
+    async def _start_dashboard_v2(self) -> None:
+        """Spawn the dashboard v2 server as a subprocess."""
         port = self._config.node.dashboard_v2_port
-        self._dashboard_v2_server = HTTPServer(("127.0.0.1", port), Handler)
-        self._dashboard_v2_thread = threading.Thread(
-            target=self._dashboard_v2_server.serve_forever,
-            daemon=True,
+        cmd = [
+            sys.executable, "-m", "shell_cluster.dashboard_v2",
+            "--port", str(port),
+        ]
+        if self._no_open:
+            cmd.append("--no-open")
+        self._dashboard_v2_proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        self._dashboard_v2_thread.start()
-
-        url = f"http://127.0.0.1:{port}"
-        log.info("Dashboard v2 running at %s", url)
-
-        if not self._no_open:
-            import webbrowser
-            webbrowser.open(url)
+        if self._dashboard_v2_proc.pid:
+            _child_pids.add(self._dashboard_v2_proc.pid)
+        log.info("Dashboard v2 started on port %d (pid=%s)", port, self._dashboard_v2_proc.pid)
 
     async def start(self) -> None:
         """Start all components."""
         log.info("Starting daemon for node '%s'", self._config.node.name)
 
-        # Fail fast: check dashboard ports before slow tunnel/discovery work
+        # Fail fast: check ports before slow tunnel/discovery work
+        import socket
+        # 9000 (API + WS proxy) always starts with the daemon
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", self._config.node.dashboard_port))
+            except OSError:
+                raise RuntimeError(
+                    f"Dashboard port {self._config.node.dashboard_port} is already in use. "
+                    f"Stop the other process or change the port."
+                )
+        # 9001 (static UI) only when not --no-dashboard
         if not self._no_dashboard:
-            import socket
-            for check_port, label in [
-                (self._config.node.dashboard_port, "Dashboard"),
-                (self._config.node.dashboard_v2_port, "Dashboard v2"),
-            ]:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    try:
-                        s.bind(("127.0.0.1", check_port))
-                    except OSError:
-                        raise RuntimeError(
-                            f"{label} port {check_port} is already in use. "
-                            f"Stop the other process or change the port."
-                        )
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("127.0.0.1", self._config.node.dashboard_v2_port))
+                except OSError:
+                    raise RuntimeError(
+                        f"Dashboard v2 port {self._config.node.dashboard_v2_port} is already in use. "
+                        f"Stop the other process or change the port."
+                    )
 
         # Register signal handlers
         if sys.platform != "win32":
@@ -226,23 +213,23 @@ class Daemon:
         else:
             await self._server.start()
 
-        # Start dashboard servers (peers are already loaded)
-        if not self._no_dashboard:
-            # Port 9000: API + WS proxy dashboard (don't open browser)
-            self._dashboard = DashboardServer(
-                host="127.0.0.1",
-                port=self._config.node.dashboard_port,
-                no_open=True,
-                get_peers=self._get_peers_for_dashboard,
-                refresh_peers=self._refresh_peers,
-            )
-            await self._dashboard.start()
+        # Port 9000: API + WS proxy — always starts with daemon
+        self._dashboard = DashboardServer(
+            host="127.0.0.1",
+            port=self._config.node.dashboard_port,
+            no_open=True,
+            get_peers=self._get_peers_for_dashboard,
+            refresh_peers=self._refresh_peers,
+        )
+        await self._dashboard.start()
 
-            # Port 9001: new static UI dashboard
-            self._start_dashboard_v2()
+        # Port 9001: static UI dashboard (subprocess, skipped with --no-dashboard)
+        if not self._no_dashboard:
+            await self._start_dashboard_v2()
 
         mode = "local" if self._no_tunnel else f"tunnel={self._tunnel_id}"
-        dashboard_info = f"dashboard={self._config.node.dashboard_port}+{self._config.node.dashboard_v2_port}" if not self._no_dashboard else "dashboard=off"
+        v2_info = f"+{self._config.node.dashboard_v2_port}" if not self._no_dashboard else ""
+        dashboard_info = f"dashboard={self._config.node.dashboard_port}{v2_info}"
         log.info(
             "Daemon running: node=%s, %s, shell=%d, %s",
             self._config.node.name,
@@ -460,13 +447,14 @@ class Daemon:
                 pass
 
         # Stop servers with short timeouts
-        # Stop dashboard v2 (HTTP server in thread)
-        if self._dashboard_v2_server:
-            self._dashboard_v2_server.shutdown()
-            self._dashboard_v2_server = None
-        if self._dashboard_v2_thread:
-            self._dashboard_v2_thread.join(timeout=2.0)
-            self._dashboard_v2_thread = None
+        # Stop dashboard v2 subprocess
+        if self._dashboard_v2_proc and self._dashboard_v2_proc.returncode is None:
+            try:
+                self._dashboard_v2_proc.kill()
+                if self._dashboard_v2_proc.pid:
+                    _child_pids.discard(self._dashboard_v2_proc.pid)
+            except ProcessLookupError:
+                pass
 
         if self._dashboard:
             try:

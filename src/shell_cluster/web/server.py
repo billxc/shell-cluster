@@ -69,8 +69,9 @@ class DashboardServer:
             ):
                 return None
 
-            # Handle CORS preflight
-            if request.method == "OPTIONS":
+            # Handle CORS preflight (websockets 16+ Request has no .method;
+            # detect preflight by the presence of Access-Control-Request-Method)
+            if "Access-Control-Request-Method" in request.headers:
                 response = connection.respond(204, "")
                 _add_cors(response, request)
                 return response

@@ -199,7 +199,7 @@ dashboard_port = 9000      # Dashboard HTTP server port
 
 [tunnel]
 backend = "devtunnel"      # Tunnel backend ("devtunnel" for now)
-expiration = "8h"          # Tunnel expiration (cloud auto-cleanup)
+expiration = "30d"          # Tunnel expiration (cloud auto-cleanup)
 
 [shell]
 command = ""               # Default shell. Empty = auto-detect

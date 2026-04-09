@@ -164,7 +164,7 @@ dashboard_port = 9000      # Dashboard HTTP server port
 
 [tunnel]
 backend = "devtunnel"      # Tunnel backend
-expiration = "8h"          # Tunnel auto-expiration
+expiration = "30d"          # Tunnel auto-expiration
 
 [shell]
 command = ""               # Default shell (empty = auto-detect)

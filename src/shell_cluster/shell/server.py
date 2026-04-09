@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+from urllib.parse import parse_qs, urlparse
 
 import websockets
 from websockets.asyncio.server import ServerConnection
@@ -79,7 +80,7 @@ class ShellServer:
             return connection.respond(404, "Not Found")
 
         self._server = await websockets.asyncio.server.serve(
-            self._handle_client,
+            self._route_client,
             self._bind_host,
             self._port,
             process_request=process_request,
@@ -106,6 +107,97 @@ class ShellServer:
             except asyncio.TimeoutError:
                 log.warning("Shell server wait_closed timed out")
         await self._shell_manager.close_all()
+
+    async def _route_client(self, ws: ServerConnection) -> None:
+        """Route WebSocket connection based on request path."""
+        path = ws.request.path if ws.request else "/"
+        if path.startswith("/raw"):
+            await self._handle_raw_client(ws)
+        else:
+            await self._handle_client(ws)
+
+    async def _handle_raw_client(self, ws: ServerConnection) -> None:
+        """Raw binary WebSocket: binary frames = PTY data, text frames = JSON control."""
+        path = ws.request.path if ws.request else "/raw"
+        params = parse_qs(urlparse(path).query)
+        cols = int(params.get("cols", ["80"])[0])
+        rows = int(params.get("rows", ["24"])[0])
+        attach_id = params.get("attach", [None])[0]
+        session_id = attach_id or params.get("session", [None])[0]
+
+        if not session_id:
+            await ws.close(1008, "Missing session or attach param")
+            return
+
+        log.info("Raw client: %s session=%s %dx%d", "attach" if attach_id else "create", session_id, cols, rows)
+
+        async def on_output(sid: str, data: bytes) -> None:
+            data = _strip_terminal_queries(data)
+            if data:
+                try:
+                    await ws.send(data)  # binary frame
+                except websockets.ConnectionClosed:
+                    pass
+
+        async def on_exit(sid: str) -> None:
+            try:
+                await ws.send(json.dumps({"type": "shell.closed", "session_id": sid}))  # text frame
+            except websockets.ConnectionClosed:
+                pass
+
+        try:
+            if attach_id:
+                session = self._shell_manager.attach(session_id, on_output, on_exit)
+                if not session:
+                    await ws.close(1008, f"Session {session_id} not found")
+                    return
+                await self._shell_manager.resize(session_id, cols, rows)
+                await ws.send(json.dumps({"type": "shell.attached", "session_id": session_id, "shell": session.shell}))
+                scrollback = session.get_scrollback()
+                if scrollback:
+                    scrollback = _strip_terminal_queries(scrollback)
+                    if scrollback:
+                        await ws.send(scrollback)  # binary
+                self._shell_manager.start_reader(session_id)
+            else:
+                session = await self._shell_manager.create(
+                    session_id=session_id,
+                    shell="",
+                    cols=cols,
+                    rows=rows,
+                    on_output=on_output,
+                    on_exit=on_exit,
+                )
+                await ws.send(json.dumps({"type": "shell.created", "session_id": session_id, "shell": session.shell}))
+        except Exception as e:
+            log.error("Raw session setup failed: %s", e)
+            await ws.close(1008, str(e))
+            return
+
+        try:
+            async for frame in ws:
+                if isinstance(frame, bytes):
+                    # Binary frame = PTY input
+                    await self._shell_manager.write(session_id, frame)
+                else:
+                    # Text frame = JSON control message
+                    try:
+                        ctrl = json.loads(frame)
+                        if ctrl.get("type") == "shell.resize":
+                            await self._shell_manager.resize(
+                                session_id,
+                                ctrl.get("cols", 80),
+                                ctrl.get("rows", 24),
+                            )
+                        elif ctrl.get("type") == "shell.close":
+                            await self._shell_manager.close(session_id)
+                            break
+                    except json.JSONDecodeError:
+                        pass
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            log.info("Raw client disconnected: session=%s", session_id)
 
     async def _handle_client(self, ws: ServerConnection) -> None:
         """Handle a connected WebSocket client."""

@@ -48,7 +48,7 @@ class TunnelBackend(Protocol):
         tunnel_id: str,
         port: int,
         label: str,
-        expiration: str = "8h",
+        expiration: str = "30d",
     ) -> TunnelInfo:
         """Create a new tunnel with a port forwarding."""
         ...
@@ -84,7 +84,7 @@ class TunnelBackend(Protocol):
         ...
 
     async def ensure_tunnel(
-        self, tunnel_id: str, port: int, label: str, expiration: str = "8h",
+        self, tunnel_id: str, port: int, label: str, expiration: str = "30d",
     ) -> None:
         """Ensure tunnel exists with the right port — reuse or create."""
         ...

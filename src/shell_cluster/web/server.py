@@ -133,8 +133,12 @@ class DashboardServer:
 
             log.info("Proxying to %s", target_uri)
 
+            # Support optional path override (e.g. /raw?session=xxx)
+            target_path = init.get("path", "")
+            connect_uri = target_uri + target_path if target_path else target_uri
+
             try:
-                async with websockets.connect(target_uri) as peer_ws:
+                async with websockets.connect(connect_uri) as peer_ws:
                     async def browser_to_peer():
                         try:
                             async for msg in ws:

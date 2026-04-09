@@ -314,84 +314,70 @@ function createSession(peer, existingSessionId) {
   term.open(pane);
   fitAddon.fit();
 
+  const sessionId = existingSessionId || genId();
+  const { cols, rows } = term;
+  // Build raw mode path with session params
+  const rawPath = isAttach
+    ? `/raw?attach=${sessionId}&cols=${cols}&rows=${rows}`
+    : `/raw?session=${sessionId}&cols=${cols}&rows=${rows}`;
+
+  // First WS goes to daemon proxy, which connects to the peer's /raw endpoint
   const wsUrl = daemonWsUrl || `ws://${location.host}`;
   const ws = new WebSocket(wsUrl);
-  const sessionId = existingSessionId || genId();
 
   const sessionState = {
     ws, term, peerName: peer.name, sessionId, pane, fitAddon,
-    shell: '', targetUri: peer.uri,
+    shell: '', targetUri: peer.uri, _attachAddon: null,
   };
   sessions.set(tabId, sessionState);
 
   term.writeln(`\x1b[2m${isAttach ? 'Reconnecting' : 'Connecting'} to ${peer.name}...\x1b[0m`);
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({ target: peer.uri }));
+    // Tell proxy to connect to the peer's /raw endpoint
+    ws.send(JSON.stringify({ target: peer.uri, path: rawPath }));
   };
 
-  let gotCreated = false;
+  let attached = false;
 
   ws.onmessage = (event) => {
     const data = event.data;
-    try {
-      const msg = JSON.parse(data);
 
-      if (msg.type === 'peer.info') {
-        const cols = term.cols;
-        const rows = term.rows;
-        if (isAttach) {
-          ws.send(JSON.stringify({
-            type: 'shell.attach',
-            session_id: sessionId,
-            cols, rows,
-          }));
-        } else {
-          ws.send(JSON.stringify({
-            type: 'shell.create',
-            session_id: sessionId,
-            shell: '',
-            cols, rows,
-          }));
+    // Before attach addon takes over, handle text control messages
+    if (!attached && typeof data === 'string') {
+      try {
+        const msg = JSON.parse(data);
+        if (msg.type === 'shell.created' || msg.type === 'shell.attached') {
+          sessionState.shell = msg.shell || '?';
+          attached = true;
+          term.clear();
+          renderTabs();
+          renderPeers();
+          // Now load attach addon — it takes over binary I/O
+          const attachAddon = new AttachAddon.AttachAddon(ws, { bidirectional: true });
+          term.loadAddon(attachAddon);
+          sessionState._attachAddon = attachAddon;
+          return;
         }
-        return;
+        if (msg.type === 'shell.closed') {
+          term.writeln('\r\n\x1b[2m[Session closed]\x1b[0m');
+          return;
+        }
+        if (msg.type === 'error') {
+          term.writeln(`\r\n\x1b[31mError: ${msg.error}\x1b[0m`);
+          return;
+        }
+      } catch (e) {
+        // Not JSON — write to terminal
+        term.write(data);
       }
-
-      if (msg.type === 'shell.created' || msg.type === 'shell.attached') {
-        sessionState.shell = msg.shell || '?';
-        gotCreated = true;
-        renderTabs();
-        renderPeers();
-        // Clear the "Connecting/Reconnecting..." text so terminal starts clean
-        term.clear();
-        return;
-      }
-
-      if (msg.type === 'shell.data' && msg.data) {
-        const raw = atob(msg.data);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        term.write(bytes);
-        return;
-      }
-
-      if (msg.type === 'shell.closed') {
-        term.writeln('\r\n\x1b[2m[Session closed]\x1b[0m');
-        return;
-      }
-
-      if (msg.type === 'error') {
-        term.writeln(`\r\n\x1b[31mError: ${msg.error}\x1b[0m`);
-        return;
-      }
-
-    } catch (e) {
-      term.write(data);
     }
   };
 
   ws.onclose = () => {
-    term.writeln('\r\n\x1b[2m[Disconnected]\x1b[0m');
+    if (!attached) {
+      term.writeln('\r\n\x1b[2m[Disconnected]\x1b[0m');
+    }
     sessionState._disconnected = true;
     renderPeers();
   };
@@ -400,41 +386,9 @@ function createSession(peer, existingSessionId) {
     term.writeln('\r\n\x1b[31m[Connection error]\x1b[0m');
   };
 
-  term.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN && gotCreated && !term.textarea?.classList.contains('composing')) {
-      const encoded = new TextEncoder().encode(data);
-      const b64 = btoa(String.fromCharCode(...encoded));
-      ws.send(JSON.stringify({
-        type: 'shell.data',
-        session_id: sessionId,
-        data: b64,
-      }));
-    }
-  });
-
-  // Track IME composition to avoid duplicate input
-  const ta = term.textarea;
-  if (ta) {
-    ta.addEventListener('compositionstart', () => ta.classList.add('composing'));
-    ta.addEventListener('compositionend', () => {
-      ta.classList.remove('composing');
-      // compositionend fires before the final onData in some browsers,
-      // so flush the composed text manually
-      if (ta.value && ws.readyState === WebSocket.OPEN && gotCreated) {
-        const encoded = new TextEncoder().encode(ta.value);
-        const b64 = btoa(String.fromCharCode(...encoded));
-        ws.send(JSON.stringify({
-          type: 'shell.data',
-          session_id: sessionId,
-          data: b64,
-        }));
-        ta.value = '';
-      }
-    });
-  }
-
+  // Resize sends JSON text frame (control channel) — works alongside attach addon
   term.onResize(({ cols, rows }) => {
-    if (ws.readyState === WebSocket.OPEN && gotCreated) {
+    if (ws.readyState === WebSocket.OPEN && attached) {
       ws.send(JSON.stringify({
         type: 'shell.resize',
         session_id: sessionId,

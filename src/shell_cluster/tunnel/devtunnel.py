@@ -79,7 +79,28 @@ class DevTunnelBackend:
             description=parse_node_name(tunnel_id),
         )
 
-    async def ensure_tunnel(self, tunnel_id: str, port: int, label: str, expiration: str = "8h") -> None:
+    async def _delete_if_queued_for_delete(self, tunnel_id: str, label: str) -> bool:
+        """Check via list if tunnel is queued for deletion, and delete it if so.
+
+        devtunnel show fails for expired tunnels, but devtunnel list still
+        returns them with tunnelExpiration == "queued for delete".
+        Returns True if the tunnel was found and deleted.
+        """
+        try:
+            data = await self._run_json("list", "--labels", label)
+            items = data if isinstance(data, list) else data.get("tunnels", data.get("value", []))
+            for item in items:
+                if item.get("tunnelId") == tunnel_id:
+                    if item.get("tunnelExpiration") == "queued for delete":
+                        log.info("Tunnel %s is queued for delete, deleting it first", tunnel_id)
+                        await self.delete(tunnel_id)
+                        return True
+                    break
+        except Exception as e:
+            log.warning("Failed to check queued-for-delete status: %s", e)
+        return False
+
+    async def ensure_tunnel(self, tunnel_id: str, port: int, label: str, expiration: str = "30d") -> None:
         """Ensure tunnel exists with the right port — reuse if present, create if not."""
         if await self.exists(tunnel_id):
             log.info("Reusing existing tunnel %s", tunnel_id)
@@ -96,6 +117,8 @@ class DevTunnelBackend:
             except Exception as e:
                 log.warning("Failed to update tunnel port: %s", e)
         else:
+            # Tunnel not usable via show — may be queued for delete; clean it up first
+            await self._delete_if_queued_for_delete(tunnel_id, label)
             log.info("Creating new tunnel %s", tunnel_id)
             await self.create(tunnel_id, port, label, expiration)
 

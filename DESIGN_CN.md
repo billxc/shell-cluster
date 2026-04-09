@@ -200,7 +200,7 @@ dashboard_port = 9000      # Dashboard HTTP 服务端口
 
 [tunnel]
 backend = "devtunnel"      # Tunnel 后端（目前仅 "devtunnel"）
-expiration = "8h"          # Tunnel 过期时间，到期后云端自动清理
+expiration = "30d"          # Tunnel 过期时间，到期后云端自动清理
 
 [shell]
 command = ""               # 默认 shell，留空 = 自动检测

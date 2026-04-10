@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>IME Test Runner — Shell Cluster</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+h1 { font-size: 18px; color: #60a5fa; margin-bottom: 16px; }
+.summary { font-size: 14px; margin-bottom: 20px; padding: 12px; background: #16213e; border-radius: 6px; }
+.summary .pass { color: #4ade80; font-weight: 600; }
+.summary .fail { color: #ef4444; font-weight: 600; }
+.test-case { border: 1px solid #0f3460; border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+.test-header { padding: 10px 16px; background: #16213e; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.test-header .icon { font-size: 16px; }
+.test-header .name { font-size: 13px; font-weight: 500; flex: 1; }
+.test-header .status { font-size: 12px; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
+.test-header .status.pass { background: #16532e; color: #4ade80; }
+.test-header .status.fail { background: #531616; color: #ef4444; }
+.test-header .status.running { background: #162e53; color: #60a5fa; }
+.test-header .status.pending { background: #2a2a2a; color: #666; }
+.test-details { padding: 12px 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px; border-top: 1px solid #0f3460; display: none; }
+.test-details.show { display: block; }
+.test-details pre { background: #0f0f1a; padding: 8px; border-radius: 4px; margin: 4px 0 8px; white-space: pre-wrap; word-break: break-all; }
+.test-details .label { color: #888; font-size: 11px; }
+#xterm-offscreen { position: absolute; left: -9999px; top: -9999px; width: 800px; height: 400px; }
+</style>
+</head>
+<body>
+
+<h1>IME Test Runner</h1>
+<div id="summary" class="summary">Loading...</div>
+<div id="results"></div>
+<div id="xterm-offscreen"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
+<script>
+// ─── Embedded Fixtures ─────────────────────────────────────────────
+const FIXTURES = [
+// ── Fixture 1: 混合输入 ──
+{"version":1,"metadata":{"description":"混合输入: 拼音'你好' + 中文逗号 + CapsLock切英文输入'hello world' + 中文句号 + 退格 + 英文句号","browser":"Chrome/146.0.0.0","os":"MacIntel","imeMethod":"macOS Chinese Pinyin (CapsLock toggle)","xtermVersion":"6.0.0","recordedAt":"2026-04-10T15:42:56.023Z"},"events":[{"t":0,"type":"keydown","key":"n","code":"KeyN","keyCode":229,"isComposing":false},{"t":0,"type":"compositionstart","data":""},{"t":1,"type":"compositionupdate","data":"n"},{"t":2,"type":"input","data":"n","inputType":"insertCompositionText","isComposing":true},{"t":102,"type":"keydown","key":"i","code":"KeyI","keyCode":229,"isComposing":true},{"t":103,"type":"compositionupdate","data":"ni"},{"t":104,"type":"input","data":"ni","inputType":"insertCompositionText","isComposing":true},{"t":107,"type":"keyup","key":"n","code":"KeyN","keyCode":78,"isComposing":true},{"t":187,"type":"keyup","key":"i","code":"KeyI","keyCode":73,"isComposing":true},{"t":289,"type":"keydown","key":"h","code":"KeyH","keyCode":229,"isComposing":true},{"t":291,"type":"compositionupdate","data":"ni h"},{"t":294,"type":"input","data":"ni h","inputType":"insertCompositionText","isComposing":true},{"t":366,"type":"keyup","key":"h","code":"KeyH","keyCode":72,"isComposing":true},{"t":401,"type":"keydown","key":"a","code":"KeyA","keyCode":229,"isComposing":true},{"t":402,"type":"compositionupdate","data":"ni ha"},{"t":405,"type":"input","data":"ni ha","inputType":"insertCompositionText","isComposing":true},{"t":462,"type":"keydown","key":"o","code":"KeyO","keyCode":229,"isComposing":true},{"t":463,"type":"compositionupdate","data":"ni hao"},{"t":466,"type":"input","data":"ni hao","inputType":"insertCompositionText","isComposing":true},{"t":499,"type":"keyup","key":"a","code":"KeyA","keyCode":65,"isComposing":true},{"t":541,"type":"keyup","key":"o","code":"KeyO","keyCode":79,"isComposing":true},{"t":2521,"type":"keydown","key":" ","code":"Space","keyCode":229,"isComposing":true},{"t":2522,"type":"compositionupdate","data":"你好"},{"t":2524,"type":"input","data":"你好","inputType":"insertCompositionText","isComposing":true},{"t":2525,"type":"compositionend","data":"你好"},{"t":2595,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false},{"t":2736,"type":"keydown","key":"，","code":"Comma","keyCode":188,"isComposing":false},{"t":2832,"type":"keyup","key":"，","code":"Comma","keyCode":188,"isComposing":false},{"t":3996,"type":"keydown","key":"h","code":"KeyH","keyCode":229,"isComposing":false},{"t":3998,"type":"compositionstart","data":""},{"t":3999,"type":"compositionupdate","data":"h"},{"t":4001,"type":"input","data":"h","inputType":"insertCompositionText","isComposing":true},{"t":4090,"type":"keyup","key":"h","code":"KeyH","keyCode":72,"isComposing":true},{"t":4180,"type":"keydown","key":"e","code":"KeyE","keyCode":229,"isComposing":true},{"t":4182,"type":"compositionupdate","data":"he"},{"t":4184,"type":"input","data":"he","inputType":"insertCompositionText","isComposing":true},{"t":4250,"type":"keyup","key":"e","code":"KeyE","keyCode":69,"isComposing":true},{"t":4293,"type":"keydown","key":"l","code":"KeyL","keyCode":229,"isComposing":true},{"t":4295,"type":"compositionupdate","data":"he l"},{"t":4297,"type":"input","data":"he l","inputType":"insertCompositionText","isComposing":true},{"t":4336,"type":"keyup","key":"l","code":"KeyL","keyCode":76,"isComposing":true},{"t":4425,"type":"keydown","key":"l","code":"KeyL","keyCode":229,"isComposing":true},{"t":4427,"type":"compositionupdate","data":"he l l"},{"t":4429,"type":"input","data":"he l l","inputType":"insertCompositionText","isComposing":true},{"t":4486,"type":"keyup","key":"l","code":"KeyL","keyCode":76,"isComposing":true},{"t":4596,"type":"keydown","key":"o","code":"KeyO","keyCode":229,"isComposing":true},{"t":4597,"type":"compositionupdate","data":"hello"},{"t":4598,"type":"input","data":"hello","inputType":"insertCompositionText","isComposing":true},{"t":4678,"type":"keyup","key":"o","code":"KeyO","keyCode":79,"isComposing":true},{"t":5347,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":true},{"t":5444,"type":"compositionupdate","data":"hello"},{"t":5445,"type":"input","data":"hello","inputType":"insertCompositionText","isComposing":true},{"t":5446,"type":"compositionend","data":"hello"},{"t":5453,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":5976,"type":"keydown","key":" ","code":"Space","keyCode":32,"isComposing":false},{"t":5977,"type":"input","data":" ","inputType":"insertText","isComposing":false},{"t":5978,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false},{"t":6247,"type":"keydown","key":"w","code":"KeyW","keyCode":87,"isComposing":false},{"t":6362,"type":"keydown","key":"o","code":"KeyO","keyCode":79,"isComposing":false},{"t":6371,"type":"keyup","key":"w","code":"KeyW","keyCode":87,"isComposing":false},{"t":6470,"type":"keyup","key":"o","code":"KeyO","keyCode":79,"isComposing":false},{"t":6538,"type":"keydown","key":"r","code":"KeyR","keyCode":82,"isComposing":false},{"t":6628,"type":"keyup","key":"r","code":"KeyR","keyCode":82,"isComposing":false},{"t":6663,"type":"keydown","key":"l","code":"KeyL","keyCode":76,"isComposing":false},{"t":6767,"type":"keyup","key":"l","code":"KeyL","keyCode":76,"isComposing":false},{"t":6842,"type":"keydown","key":"d","code":"KeyD","keyCode":68,"isComposing":false},{"t":6937,"type":"keyup","key":"d","code":"KeyD","keyCode":68,"isComposing":false},{"t":7370,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":7512,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":8884,"type":"keydown","key":"。","code":"Period","keyCode":190,"isComposing":false},{"t":8979,"type":"keyup","key":"。","code":"Period","keyCode":190,"isComposing":false},{"t":10036,"type":"keydown","key":"Backspace","code":"Backspace","keyCode":8,"isComposing":false},{"t":10166,"type":"keyup","key":"Backspace","code":"Backspace","keyCode":8,"isComposing":false},{"t":10399,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":10513,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":11044,"type":"keydown","key":".","code":"Period","keyCode":190,"isComposing":false},{"t":11045,"type":"keyup","key":".","code":"Period","keyCode":190,"isComposing":false}],"expectedOutput":"你好，hello world."},
+// ── Fixture 2: 终端命令场景 ──
+{"version":1,"metadata":{"description":"终端命令场景: IME开启时输入ls/cd/dir等命令，CapsLock切英文确认，Enter确认候选词（非执行命令）","browser":"Chrome/146.0.0.0","os":"MacIntel","imeMethod":"macOS Chinese Pinyin (CapsLock toggle, Enter confirm)","xtermVersion":"6.0.0","recordedAt":"2026-04-10T15:44:37.287Z"},"events":[{"t":0,"type":"keydown","key":"l","code":"KeyL","keyCode":229,"isComposing":false},{"t":1,"type":"compositionstart","data":""},{"t":1,"type":"compositionupdate","data":"l"},{"t":2,"type":"input","data":"l","inputType":"insertCompositionText","isComposing":true},{"t":80,"type":"keyup","key":"l","code":"KeyL","keyCode":76,"isComposing":true},{"t":112,"type":"keydown","key":"s","code":"KeyS","keyCode":229,"isComposing":true},{"t":112,"type":"compositionupdate","data":"l s"},{"t":113,"type":"input","data":"l s","inputType":"insertCompositionText","isComposing":true},{"t":232,"type":"keyup","key":"s","code":"KeyS","keyCode":83,"isComposing":true},{"t":953,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":true},{"t":1048,"type":"compositionupdate","data":"ls"},{"t":1049,"type":"input","data":"ls","inputType":"insertCompositionText","isComposing":true},{"t":1050,"type":"compositionend","data":"ls"},{"t":1054,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":3537,"type":"keydown","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":3655,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":5719,"type":"keydown","key":"d","code":"KeyD","keyCode":68,"isComposing":false},{"t":5843,"type":"keyup","key":"d","code":"KeyD","keyCode":68,"isComposing":false},{"t":5852,"type":"keydown","key":"i","code":"KeyI","keyCode":73,"isComposing":false},{"t":5962,"type":"keyup","key":"i","code":"KeyI","keyCode":73,"isComposing":false},{"t":6054,"type":"keydown","key":"r","code":"KeyR","keyCode":82,"isComposing":false},{"t":6160,"type":"keyup","key":"r","code":"KeyR","keyCode":82,"isComposing":false},{"t":7657,"type":"keydown","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":7761,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":7960,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":8010,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":12513,"type":"keydown","key":"c","code":"KeyC","keyCode":229,"isComposing":false},{"t":12515,"type":"compositionstart","data":""},{"t":12516,"type":"compositionupdate","data":"c"},{"t":12519,"type":"input","data":"c","inputType":"insertCompositionText","isComposing":true},{"t":12525,"type":"keyup","key":"c","code":"KeyC","keyCode":67,"isComposing":true},{"t":12664,"type":"keydown","key":"d","code":"KeyD","keyCode":229,"isComposing":true},{"t":12666,"type":"compositionupdate","data":"c d"},{"t":12669,"type":"input","data":"c d","inputType":"insertCompositionText","isComposing":true},{"t":12731,"type":"keyup","key":"d","code":"KeyD","keyCode":68,"isComposing":true},{"t":13229,"type":"keydown","key":"Enter","code":"Enter","keyCode":229,"isComposing":true},{"t":13230,"type":"compositionupdate","data":"cd"},{"t":13231,"type":"input","data":"cd","inputType":"insertCompositionText","isComposing":true},{"t":13231,"type":"compositionend","data":"cd"},{"t":13333,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":14168,"type":"keydown","key":" ","code":"Space","keyCode":32,"isComposing":false},{"t":14171,"type":"input","data":" ","inputType":"insertText","isComposing":false},{"t":14261,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false},{"t":14812,"type":"keydown","key":"d","code":"KeyD","keyCode":229,"isComposing":false},{"t":14814,"type":"compositionstart","data":""},{"t":14815,"type":"compositionupdate","data":"d"},{"t":14817,"type":"input","data":"d","inputType":"insertCompositionText","isComposing":true},{"t":14911,"type":"keyup","key":"d","code":"KeyD","keyCode":68,"isComposing":true},{"t":15992,"type":"keydown","key":"o","code":"KeyO","keyCode":229,"isComposing":true},{"t":15993,"type":"compositionupdate","data":"do"},{"t":15994,"type":"input","data":"do","inputType":"insertCompositionText","isComposing":true},{"t":16122,"type":"keyup","key":"o","code":"KeyO","keyCode":79,"isComposing":true},{"t":16409,"type":"keydown","key":"c","code":"KeyC","keyCode":229,"isComposing":true},{"t":16411,"type":"compositionupdate","data":"do c"},{"t":16416,"type":"input","data":"do c","inputType":"insertCompositionText","isComposing":true},{"t":16485,"type":"keyup","key":"c","code":"KeyC","keyCode":67,"isComposing":true},{"t":16541,"type":"keydown","key":"u","code":"KeyU","keyCode":229,"isComposing":true},{"t":16543,"type":"compositionupdate","data":"do cu"},{"t":16548,"type":"input","data":"do cu","inputType":"insertCompositionText","isComposing":true},{"t":16602,"type":"keyup","key":"u","code":"KeyU","keyCode":85,"isComposing":true},{"t":16827,"type":"keydown","key":"m","code":"KeyM","keyCode":229,"isComposing":true},{"t":16829,"type":"compositionupdate","data":"docum"},{"t":16830,"type":"input","data":"docum","inputType":"insertCompositionText","isComposing":true},{"t":16907,"type":"keyup","key":"m","code":"KeyM","keyCode":77,"isComposing":true},{"t":16941,"type":"keydown","key":"e","code":"KeyE","keyCode":229,"isComposing":true},{"t":16943,"type":"compositionupdate","data":"docume"},{"t":16949,"type":"input","data":"docume","inputType":"insertCompositionText","isComposing":true},{"t":17010,"type":"keyup","key":"e","code":"KeyE","keyCode":69,"isComposing":true},{"t":17054,"type":"keydown","key":"n","code":"KeyN","keyCode":229,"isComposing":true},{"t":17056,"type":"compositionupdate","data":"documen"},{"t":17059,"type":"input","data":"documen","inputType":"insertCompositionText","isComposing":true},{"t":17114,"type":"keyup","key":"n","code":"KeyN","keyCode":78,"isComposing":true},{"t":17189,"type":"keydown","key":"t","code":"KeyT","keyCode":229,"isComposing":true},{"t":17191,"type":"compositionupdate","data":"document"},{"t":17195,"type":"input","data":"document","inputType":"insertCompositionText","isComposing":true},{"t":17289,"type":"keyup","key":"t","code":"KeyT","keyCode":84,"isComposing":true},{"t":18203,"type":"keydown","key":"s","code":"KeyS","keyCode":229,"isComposing":true},{"t":18205,"type":"compositionupdate","data":"documents"},{"t":18207,"type":"input","data":"documents","inputType":"insertCompositionText","isComposing":true},{"t":18303,"type":"keyup","key":"s","code":"KeyS","keyCode":83,"isComposing":true},{"t":18720,"type":"keydown","key":"Enter","code":"Enter","keyCode":229,"isComposing":true},{"t":18722,"type":"compositionupdate","data":"documents"},{"t":18724,"type":"input","data":"documents","inputType":"insertCompositionText","isComposing":true},{"t":18725,"type":"compositionend","data":"documents"},{"t":18836,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":20617,"type":"keydown","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":20724,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},{"t":21377,"type":"keydown","key":"d","code":"KeyD","keyCode":229,"isComposing":false},{"t":21379,"type":"compositionstart","data":""},{"t":21380,"type":"compositionupdate","data":"d"},{"t":21382,"type":"input","data":"d","inputType":"insertCompositionText","isComposing":true},{"t":21458,"type":"keyup","key":"d","code":"KeyD","keyCode":68,"isComposing":true},{"t":21476,"type":"keydown","key":"i","code":"KeyI","keyCode":229,"isComposing":true},{"t":21477,"type":"compositionupdate","data":"di"},{"t":21478,"type":"input","data":"di","inputType":"insertCompositionText","isComposing":true},{"t":21568,"type":"keyup","key":"i","code":"KeyI","keyCode":73,"isComposing":true},{"t":21683,"type":"keydown","key":"r","code":"KeyR","keyCode":229,"isComposing":true},{"t":21686,"type":"compositionupdate","data":"di r"},{"t":21690,"type":"input","data":"di r","inputType":"insertCompositionText","isComposing":true},{"t":21739,"type":"keyup","key":"r","code":"KeyR","keyCode":82,"isComposing":true},{"t":22201,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":true},{"t":22318,"type":"compositionupdate","data":"dir"},{"t":22319,"type":"input","data":"dir","inputType":"insertCompositionText","isComposing":true},{"t":22320,"type":"compositionend","data":"dir"},{"t":22343,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},{"t":22908,"type":"keydown","key":" ","code":"Space","keyCode":32,"isComposing":false},{"t":22910,"type":"input","data":" ","inputType":"insertText","isComposing":false},{"t":23003,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false}],"expectedOutput":"ls\rdir\rcd documents\rdir "}
+];
+
+// ─── Test Engine ───────────────────────────────────────────────────
+
+function createTestTerminal() {
+  const container = document.getElementById('xterm-offscreen');
+  container.innerHTML = '';
+
+  const term = new Terminal({
+    cursorBlink: false,
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    theme: { background: '#1a1a2e', foreground: '#e0e0e0' },
+  });
+
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+  fitAddon.fit();
+
+  return term;
+}
+
+function dispatchEvent(textarea, evt) {
+  if (evt.type === 'keydown' || evt.type === 'keyup') {
+    textarea.dispatchEvent(new KeyboardEvent(evt.type, {
+      key: evt.key || '', code: evt.code || '',
+      keyCode: evt.keyCode || 0, which: evt.keyCode || 0,
+      isComposing: evt.isComposing || false,
+      bubbles: true, cancelable: true,
+    }));
+  } else if (evt.type.startsWith('composition')) {
+    if (evt.data != null) textarea.value = evt.data;
+    textarea.dispatchEvent(new CompositionEvent(evt.type, {
+      data: evt.data || '', bubbles: true, cancelable: true,
+    }));
+  } else if (evt.type === 'input') {
+    if (evt.data != null) textarea.value = evt.data;
+    textarea.dispatchEvent(new InputEvent(evt.type, {
+      data: evt.data || null, inputType: evt.inputType || '',
+      isComposing: evt.isComposing || false,
+      bubbles: true, cancelable: true,
+    }));
+  }
+}
+
+async function runFixture(fixture) {
+  const term = createTestTerminal();
+  const collected = [];
+
+  // Local echo + collect
+  term.onData(data => collected.push(data));
+  term.focus();
+
+  const textarea = term.textarea;
+  if (!textarea) {
+    term.dispose();
+    return { pass: false, collected: '', error: 'Cannot find xterm textarea' };
+  }
+
+  // Dispatch all events
+  for (const evt of fixture.events) {
+    dispatchEvent(textarea, evt);
+  }
+
+  // Wait for deferred composition processing
+  await new Promise(r => setTimeout(r, 100));
+
+  const output = collected.join('');
+  term.dispose();
+
+  const expected = fixture.expectedOutput || '';
+  if (!expected) {
+    return { pass: true, collected: output, expected, note: 'No expectedOutput, captured only' };
+  }
+
+  const pass = output === expected || output.includes(expected);
+  return { pass, collected: output, expected };
+}
+
+function toHex(str) {
+  return Array.from(str).map(ch => {
+    const cp = ch.codePointAt(0);
+    if (cp === 0x0d) return '\\r';
+    if (cp === 0x0a) return '\\n';
+    if (cp === 0x7f) return '\\x7f';
+    if (cp < 0x20) return `\\x${cp.toString(16).padStart(2,'0')}`;
+    return cp > 0x7f ? `U+${cp.toString(16).toUpperCase().padStart(4, '0')}` : ch;
+  }).join(' ');
+}
+
+function renderResult(idx, fixture, result) {
+  const caseEl = document.createElement('div');
+  caseEl.className = 'test-case';
+
+  const statusClass = result.pass ? 'pass' : 'fail';
+  const statusText = result.pass ? 'PASS' : 'FAIL';
+  const icon = result.pass ? '✓' : '✗';
+
+  const events = fixture.events;
+  const compositionCount = events.filter(e => e.type.startsWith('composition')).length;
+  const imeKeydowns = events.filter(e => e.type === 'keydown' && e.keyCode === 229).length;
+
+  caseEl.innerHTML = `
+    <div class="test-header" onclick="this.nextElementSibling.classList.toggle('show')">
+      <span class="icon">${icon}</span>
+      <span class="name">#${idx + 1} ${fixture.metadata.description}</span>
+      <span class="status ${statusClass}">${statusText}</span>
+    </div>
+    <div class="test-details">
+      <span class="label">Events: ${events.length} total, ${compositionCount} composition, ${imeKeydowns} IME keydowns</span>
+      <span class="label"> | IME: ${fixture.metadata.imeMethod || 'N/A'}</span>
+
+      <p style="margin-top:8px"><span class="label">Expected:</span></p>
+      <pre>"${escHtml(result.expected)}"
+${toHex(result.expected)}</pre>
+
+      <p><span class="label">Collected onData:</span></p>
+      <pre>"${escHtml(result.collected)}"
+${toHex(result.collected)}</pre>
+
+      ${result.error ? `<p style="color:#ef4444">${result.error}</p>` : ''}
+      ${result.note ? `<p style="color:#fbbf24">${result.note}</p>` : ''}
+    </div>
+  `;
+
+  return caseEl;
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function runAll() {
+  const resultsEl = document.getElementById('results');
+  const summaryEl = document.getElementById('summary');
+  resultsEl.innerHTML = '';
+
+  let passed = 0, failed = 0;
+
+  for (let i = 0; i < FIXTURES.length; i++) {
+    const fixture = FIXTURES[i];
+    summaryEl.textContent = `Running ${i + 1} / ${FIXTURES.length}: ${fixture.metadata.description}...`;
+
+    const result = await runFixture(fixture);
+    if (result.pass) passed++; else failed++;
+
+    resultsEl.appendChild(renderResult(i, fixture, result));
+  }
+
+  summaryEl.innerHTML = `
+    <span class="pass">${passed} passed</span> /
+    <span class="fail">${failed} failed</span> /
+    ${FIXTURES.length} total
+    ${failed === 0 ? ' — All tests passed!' : ''}
+  `;
+}
+
+runAll();
+</script>
+</body>
+</html>

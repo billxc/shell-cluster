@@ -302,7 +302,8 @@ function createSession(peer, existingSessionId) {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 14,
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', monospace",
+    allowProposedApi: true,
     theme: {
       background: '#1e1e2e',
       foreground: '#cdd6f4',
@@ -320,6 +321,20 @@ function createSession(peer, existingSessionId) {
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
+
+  // Load unicode11 addon for correct CJK wide character width calculation
+  if (typeof Unicode11Addon !== 'undefined') {
+    const unicode11 = new Unicode11Addon.Unicode11Addon();
+    term.loadAddon(unicode11);
+    term.unicode.activeVersion = '11';
+  }
+
+  // Suppress app shortcuts during IME composition
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.isComposing) return true; // let xterm handle it
+    return true;
+  });
+
   term.open(pane);
 
   const sessionId = existingSessionId || genId();
@@ -501,6 +516,8 @@ function timeAgo(isoStr) {
 
 // --- Keyboard shortcuts ---
 document.addEventListener('keydown', (e) => {
+  // Don't intercept keys during IME composition
+  if (e.isComposing || e.keyCode === 229) return;
   // Alt+[ / Alt+] to switch tabs (Ctrl+Tab is intercepted by browsers)
   if (e.altKey && (e.key === '[' || e.key === ']')) {
     e.preventDefault();

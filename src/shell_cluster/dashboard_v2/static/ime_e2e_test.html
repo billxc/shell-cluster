@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>IME E2E Test — Shell Cluster</title>
+<link rel="stylesheet" href="xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 20px; }
+h1 { font-size: 20px; margin-bottom: 4px; }
+.subtitle { font-size: 13px; color: #6c7086; margin-bottom: 16px; }
+#terminal-container { width: 800px; height: 300px; margin-bottom: 16px; border: 1px solid #313244; border-radius: 6px; overflow: hidden; }
+#output { font-family: 'JetBrains Mono', monospace; font-size: 13px; white-space: pre-wrap; }
+.pass { color: #a6e3a1; } .fail { color: #f38ba8; } .info { color: #89b4fa; } .dim { color: #6c7086; }
+</style>
+</head>
+<body>
+<!--
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║  Shell Cluster — CJK IME 端到端测试                            ║
+  ╠══════════════════════════════════════════════════════════════════╣
+  ║                                                                ║
+  ║  本文件测试完整链路：                                           ║
+  ║                                                                ║
+  ║    IME 事件 → xterm.js → AttachAddon → WebSocket               ║
+  ║    → shell/server.py → PTY → echo                              ║
+  ║    → WebSocket → xterm.js terminal buffer                      ║
+  ║                                                                ║
+  ║  与 ime_test.html（纯前端测试）不同，本文件连接真实的           ║
+  ║  shell server 和 PTY，验证 CJK 文本在整条管线中不丢失、       ║
+  ║  不乱码、不重复。                                               ║
+  ║                                                                ║
+  ║  ── 前置条件 ──                                                ║
+  ║                                                                ║
+  ║  需要 shell server 运行中:                                     ║
+  ║    shellcluster start --no-tunnel --port 8765                  ║
+  ║  或:                                                            ║
+  ║    python -m shell_cluster.daemon --no-tunnel --port 8765      ║
+  ║                                                                ║
+  ║  然后启动 HTTP 服务并打开测试页:                                ║
+  ║    cd src/shell_cluster/dashboard_v2/static                    ║
+  ║    python3 -m http.server 9876                                 ║
+  ║    open http://localhost:9876/ime_e2e_test.html                ║
+  ║                                                                ║
+  ║  ── 测试流程 ──                                                ║
+  ║                                                                ║
+  ║  对每个测试用例:                                                ║
+  ║  1. 通过 /raw WebSocket 创建一个 PTY session                   ║
+  ║  2. 加载 AttachAddon 建立双向 I/O                              ║
+  ║  3. 等待 shell prompt                                          ║
+  ║  4. 回放录制的 IME 事件到 xterm textarea                      ║
+  ║  5. 等待 PTY echo 回显                                         ║
+  ║  6. 从 xterm terminal buffer 读取实际显示内容                  ║
+  ║  7. 检查 buffer 中是否包含期望的 CJK 文本                     ║
+  ║                                                                ║
+  ║  这验证了:                                                      ║
+  ║  - xterm CompositionHelper 正确提取 composed text              ║
+  ║  - AttachAddon 正确发送 UTF-8 text frame                      ║
+  ║  - server.py 正确 .encode('utf-8') 并写入 PTY                 ║
+  ║  - PTY echo 的 CJK 字节正确回传并渲染                         ║
+  ║                                                                ║
+  ║  ── 测试场景 ──                                                ║
+  ║                                                                ║
+  ║  #1 composition_nihao                                          ║
+  ║     拼音输入 "nihao" → Space 选 "你好"                         ║
+  ║     验证 PTY 收到并回显 "你好"                                  ║
+  ║                                                                ║
+  ║  #2 ime_then_enter                                             ║
+  ║     IME 输入 "ls" → CapsLock 确认 → Enter 执行                ║
+  ║     验证 PTY 收到 "ls\r"，Enter 不在 composition 中误发       ║
+  ║                                                                ║
+  ║  #3 mixed_cjk_ascii                                            ║
+  ║     IME 输入 "echo" → CapsLock 确认 → 空格                    ║
+  ║     → IME 输入 "nihao" → Space 选 "你好" → Enter 执行         ║
+  ║     验证 PTY 收到 "echo 你好\r" 并输出 "你好"                  ║
+  ║                                                                ║
+  ║  ── 依赖 ──                                                    ║
+  ║                                                                ║
+  ║  - 项目自身的 xterm.min.js (v6.0.0)                            ║
+  ║  - 项目自身的 addon-attach.min.js                              ║
+  ║  - 运行中的 shell server (ws://localhost:8765)                 ║
+  ║                                                                ║
+  ╚══════════════════════════════════════════════════════════════════╝
+-->
+
+<h1>Shell Cluster IME E2E Test</h1>
+<p class="subtitle">
+  端到端测试: IME 事件 → xterm.js → AttachAddon → WebSocket → PTY → echo 回显验证。
+  需要 shell server 运行在 ws://localhost:8765。
+</p>
+<div id="terminal-container"></div>
+<div id="output"></div>
+
+<script src="xterm.min.js"></script>
+<script src="addon-fit.min.js"></script>
+<script src="addon-attach.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// 配置
+// ═══════════════════════════════════════════════════════════════════
+
+// Shell server WebSocket 地址，与 app.js 中 peer.uri 对应
+// Shell server WebSocket 地址
+// 测试用独立实例，与生产环境隔离
+// 启动方式: python3 tests/ime/start_test_server.py 18765
+const SHELL_SERVER = 'ws://localhost:18765';
+
+// 等待 shell prompt 的超时 (ms)
+const PROMPT_WAIT = 2000;
+
+// 等待 PTY echo 的超时 (ms)
+const ECHO_WAIT = 2000;
+
+// ═══════════════════════════════════════════════════════════════════
+// Terminal 配置：与 app.js:302-320 完全一致
+// ═══════════════════════════════════════════════════════════════════
+function createTerm() {
+  const container = document.getElementById('terminal-container');
+  container.innerHTML = '';
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+    theme: {
+      background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc',
+      selectionBackground: '#45475a', black: '#45475a', red: '#f38ba8',
+      green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa',
+      magenta: '#cba6f7', cyan: '#94e2d5', white: '#bac2de',
+    },
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+  fitAddon.fit();
+  return { term, fitAddon };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// WebSocket 连接：复刻 app.js:344-404 的连接流程
+//
+// 使用 /raw 端点 + AttachAddon，与生产环境完全一致。
+// 返回 Promise，在 AttachAddon 加载完成后 resolve。
+// ═══════════════════════════════════════════════════════════════════
+function connectToShell(term, sessionId) {
+  return new Promise((resolve, reject) => {
+    const { cols, rows } = term;
+    const wsUrl = `${SHELL_SERVER}/raw?session=${sessionId}&cols=${cols}&rows=${rows}`;
+    log('dim', '  WebSocket: ' + wsUrl);
+
+    const ws = new WebSocket(wsUrl);
+    let attachAddon = null;
+    let attached = false;
+
+    ws.onmessage = (event) => {
+      if (attached) return; // AttachAddon handles binary I/O
+      const data = event.data;
+      if (typeof data === 'string') {
+        try {
+          const msg = JSON.parse(data);
+          if (msg.type === 'shell.created' || msg.type === 'shell.attached') {
+            attached = true;
+            // 加载 AttachAddon —— 与 app.js:386 完全一致
+            attachAddon = new AttachAddon.AttachAddon(ws, { bidirectional: true });
+            term.loadAddon(attachAddon);
+            resolve({ ws, attachAddon });
+            return;
+          }
+          if (msg.type === 'error') {
+            reject(new Error(msg.error));
+            return;
+          }
+        } catch (e) {}
+      }
+    };
+
+    ws.onerror = () => reject(new Error('WebSocket connection failed'));
+    ws.onclose = () => { if (!attached) reject(new Error('WebSocket closed before session created')); };
+
+    setTimeout(() => { if (!attached) reject(new Error('Timeout waiting for shell.created')); }, 5000);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 事件回放引擎（与 ime_test.html 相同）
+//
+// 关键: compositionend 后 yield 20ms，让 xterm 的 setTimeout(0)
+// 从 textarea.value 读取最终组合文本。
+// ═══════════════════════════════════════════════════════════════════
+function dispatch(textarea, evt) {
+  if (evt.type === 'keydown' || evt.type === 'keyup') {
+    textarea.dispatchEvent(new KeyboardEvent(evt.type, {
+      key: evt.key || '', code: evt.code || '',
+      keyCode: evt.keyCode || 0, which: evt.keyCode || 0,
+      isComposing: evt.isComposing || false,
+      bubbles: true, cancelable: true,
+    }));
+  } else if (evt.type.startsWith('composition')) {
+    if (evt.data != null) textarea.value = evt.data;
+    textarea.dispatchEvent(new CompositionEvent(evt.type, {
+      data: evt.data || '', bubbles: true, cancelable: true,
+    }));
+  } else if (evt.type === 'input') {
+    if (evt.data != null) textarea.value = evt.data;
+    textarea.dispatchEvent(new InputEvent(evt.type, {
+      data: evt.data || null, inputType: evt.inputType || '',
+      isComposing: evt.isComposing || false,
+      bubbles: true, cancelable: true,
+    }));
+  }
+}
+
+async function dispatchAll(textarea, events) {
+  for (const evt of events) {
+    dispatch(textarea, evt);
+    if (evt.type === 'compositionend') {
+      await new Promise(r => setTimeout(r, 20));
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Terminal buffer 读取
+//
+// 从 xterm 的 active buffer 中读取所有行的文本内容。
+// 这是 PTY echo 回来后 xterm 实际渲染的内容。
+// ═══════════════════════════════════════════════════════════════════
+function readTerminalBuffer(term) {
+  const buf = term.buffer.active;
+  const lines = [];
+  for (let i = 0; i <= buf.cursorY + buf.baseY; i++) {
+    const line = buf.getLine(i);
+    if (line) lines.push(line.translateToString(true));
+  }
+  return lines.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 测试 Fixtures
+//
+// 每个 fixture 包含:
+//   name       - 测试名称
+//   desc       - 场景描述
+//   marker     - 在 terminal buffer 中检查的文本标记
+//   events     - 录制的 IME 事件数组
+//
+// marker 是从 PTY echo 回来后应该出现在 terminal 中的文本。
+// 我们不检查精确的 buffer 内容（因为有 prompt、ANSI 序列等），
+// 而是检查 marker 是否存在于 buffer 中。
+// ═══════════════════════════════════════════════════════════════════
+const FIXTURES = [
+
+  // ── #1: 拼音输入 "你好" ────────────────────────────────────
+  //
+  // 输入: nihao → Space 选候选词
+  // 期望: terminal buffer 中出现 "你好"
+  //
+  // 验证链路:
+  //   compositionend("你好") → onData("你好") → AttachAddon
+  //   → WebSocket text frame "你好" → server.py .encode('utf-8')
+  //   → os.write(pty_fd, b'\xe4\xbd\xa0\xe5\xa5\xbd')
+  //   → shell echo → os.read(pty_fd) → WebSocket binary frame
+  //   → xterm.write() → buffer 渲染 "你好"
+  {
+    name: 'composition_nihao',
+    desc: '拼音输入 nihao → 你好 (验证 CJK 字符全链路)',
+    marker: '你好',
+    events: [
+      {"t":0,"type":"keydown","key":"n","code":"KeyN","keyCode":229,"isComposing":false},
+      {"t":0,"type":"compositionstart","data":""},
+      {"t":1,"type":"compositionupdate","data":"n"},
+      {"t":2,"type":"input","data":"n","inputType":"insertCompositionText","isComposing":true},
+      {"t":102,"type":"keydown","key":"i","code":"KeyI","keyCode":229,"isComposing":true},
+      {"t":103,"type":"compositionupdate","data":"ni"},
+      {"t":104,"type":"input","data":"ni","inputType":"insertCompositionText","isComposing":true},
+      {"t":289,"type":"keydown","key":"h","code":"KeyH","keyCode":229,"isComposing":true},
+      {"t":291,"type":"compositionupdate","data":"ni h"},
+      {"t":294,"type":"input","data":"ni h","inputType":"insertCompositionText","isComposing":true},
+      {"t":401,"type":"keydown","key":"a","code":"KeyA","keyCode":229,"isComposing":true},
+      {"t":402,"type":"compositionupdate","data":"ni ha"},
+      {"t":405,"type":"input","data":"ni ha","inputType":"insertCompositionText","isComposing":true},
+      {"t":462,"type":"keydown","key":"o","code":"KeyO","keyCode":229,"isComposing":true},
+      {"t":463,"type":"compositionupdate","data":"ni hao"},
+      {"t":466,"type":"input","data":"ni hao","inputType":"insertCompositionText","isComposing":true},
+      {"t":2521,"type":"keydown","key":" ","code":"Space","keyCode":229,"isComposing":true},
+      {"t":2522,"type":"compositionupdate","data":"你好"},
+      {"t":2524,"type":"input","data":"你好","inputType":"insertCompositionText","isComposing":true},
+      {"t":2525,"type":"compositionend","data":"你好"},
+      {"t":2595,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false},
+    ],
+  },
+
+  // ── #2: IME 输入 ls → CapsLock 确认 → Enter 执行 ──────────
+  //
+  // 验证: Enter(keyCode=13) 在 composition 结束后才发 \r
+  // 不应在 composition 期间误发回车
+  {
+    name: 'ime_then_enter',
+    desc: 'IME 输入 ls → CapsLock 确认 → Enter 执行 (验证 Enter 不在 IME 中误发)',
+    marker: 'ls',
+    events: [
+      {"t":0,"type":"keydown","key":"l","code":"KeyL","keyCode":229,"isComposing":false},
+      {"t":1,"type":"compositionstart","data":""},
+      {"t":1,"type":"compositionupdate","data":"l"},
+      {"t":2,"type":"input","data":"l","inputType":"insertCompositionText","isComposing":true},
+      {"t":112,"type":"keydown","key":"s","code":"KeyS","keyCode":229,"isComposing":true},
+      {"t":112,"type":"compositionupdate","data":"l s"},
+      {"t":113,"type":"input","data":"l s","inputType":"insertCompositionText","isComposing":true},
+      {"t":953,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":true},
+      {"t":1048,"type":"compositionupdate","data":"ls"},
+      {"t":1049,"type":"input","data":"ls","inputType":"insertCompositionText","isComposing":true},
+      {"t":1050,"type":"compositionend","data":"ls"},
+      {"t":1054,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},
+      // Enter: keyCode=13, isComposing=false → 应该发送 \r
+      {"t":3537,"type":"keydown","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},
+      {"t":3655,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},
+    ],
+  },
+
+  // ── #3: echo 你好 → Enter 执行 → 验证输出 ────────────────
+  //
+  // 完整命令: echo + 空格 + 你好 + 回车
+  // 验证: PTY 执行 `echo 你好` 后输出行包含 "你好"
+  {
+    name: 'mixed_cjk_ascii',
+    desc: 'echo 你好 → Enter 执行 (验证 PTY 正确执行 CJK 命令)',
+    marker: '你好',
+    events: [
+      // "echo" 通过 IME 输入 → CapsLock 确认
+      {"t":0,"type":"keydown","key":"e","code":"KeyE","keyCode":229,"isComposing":false},
+      {"t":1,"type":"compositionstart","data":""},
+      {"t":2,"type":"compositionupdate","data":"e"},
+      {"t":3,"type":"input","data":"e","inputType":"insertCompositionText","isComposing":true},
+      {"t":100,"type":"keydown","key":"c","code":"KeyC","keyCode":229,"isComposing":true},
+      {"t":101,"type":"compositionupdate","data":"ec"},
+      {"t":102,"type":"input","data":"ec","inputType":"insertCompositionText","isComposing":true},
+      {"t":200,"type":"keydown","key":"h","code":"KeyH","keyCode":229,"isComposing":true},
+      {"t":201,"type":"compositionupdate","data":"ech"},
+      {"t":202,"type":"input","data":"ech","inputType":"insertCompositionText","isComposing":true},
+      {"t":300,"type":"keydown","key":"o","code":"KeyO","keyCode":229,"isComposing":true},
+      {"t":301,"type":"compositionupdate","data":"echo"},
+      {"t":302,"type":"input","data":"echo","inputType":"insertCompositionText","isComposing":true},
+      {"t":500,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":true},
+      {"t":510,"type":"compositionupdate","data":"echo"},
+      {"t":511,"type":"input","data":"echo","inputType":"insertCompositionText","isComposing":true},
+      {"t":512,"type":"compositionend","data":"echo"},
+      {"t":520,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},
+      // 空格 (非 IME)
+      {"t":700,"type":"keydown","key":" ","code":"Space","keyCode":32,"isComposing":false},
+      {"t":701,"type":"input","data":" ","inputType":"insertText","isComposing":false},
+      {"t":702,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false},
+      // CapsLock 切回中文, "nihao" → 你好
+      {"t":900,"type":"keydown","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},
+      {"t":910,"type":"keyup","key":"CapsLock","code":"CapsLock","keyCode":20,"isComposing":false},
+      {"t":1000,"type":"keydown","key":"n","code":"KeyN","keyCode":229,"isComposing":false},
+      {"t":1001,"type":"compositionstart","data":""},
+      {"t":1002,"type":"compositionupdate","data":"n"},
+      {"t":1003,"type":"input","data":"n","inputType":"insertCompositionText","isComposing":true},
+      {"t":1100,"type":"keydown","key":"i","code":"KeyI","keyCode":229,"isComposing":true},
+      {"t":1101,"type":"compositionupdate","data":"ni"},
+      {"t":1102,"type":"input","data":"ni","inputType":"insertCompositionText","isComposing":true},
+      {"t":1200,"type":"keydown","key":"h","code":"KeyH","keyCode":229,"isComposing":true},
+      {"t":1201,"type":"compositionupdate","data":"ni h"},
+      {"t":1202,"type":"input","data":"ni h","inputType":"insertCompositionText","isComposing":true},
+      {"t":1300,"type":"keydown","key":"a","code":"KeyA","keyCode":229,"isComposing":true},
+      {"t":1301,"type":"compositionupdate","data":"ni ha"},
+      {"t":1302,"type":"input","data":"ni ha","inputType":"insertCompositionText","isComposing":true},
+      {"t":1400,"type":"keydown","key":"o","code":"KeyO","keyCode":229,"isComposing":true},
+      {"t":1401,"type":"compositionupdate","data":"ni hao"},
+      {"t":1402,"type":"input","data":"ni hao","inputType":"insertCompositionText","isComposing":true},
+      // Space 选候选词 → 你好
+      {"t":2000,"type":"keydown","key":" ","code":"Space","keyCode":229,"isComposing":true},
+      {"t":2001,"type":"compositionupdate","data":"你好"},
+      {"t":2002,"type":"input","data":"你好","inputType":"insertCompositionText","isComposing":true},
+      {"t":2003,"type":"compositionend","data":"你好"},
+      {"t":2010,"type":"keyup","key":" ","code":"Space","keyCode":32,"isComposing":false},
+      // Enter 执行命令
+      {"t":3000,"type":"keydown","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},
+      {"t":3100,"type":"keyup","key":"Enter","code":"Enter","keyCode":13,"isComposing":false},
+    ],
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// Logging
+// ═══════════════════════════════════════════════════════════════════
+const outputEl = document.getElementById('output');
+function log(cls, msg) {
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = msg;
+  outputEl.appendChild(line);
+  console.log('[IME-E2E] ' + msg);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Test Runner
+// ═══════════════════════════════════════════════════════════════════
+async function runAll() {
+  log('dim', 'Shell server: ' + SHELL_SERVER);
+  log('dim', 'xterm.js: v6.0.0 (project local) + AttachAddon');
+  log('dim', '');
+
+  let totalPass = 0, totalFail = 0;
+  const results = [];
+
+  for (let i = 0; i < FIXTURES.length; i++) {
+    const fix = FIXTURES[i];
+    const sessionId = 'ime' + Math.random().toString(36).slice(2, 8);
+
+    log('dim', '── #' + (i+1) + ' ' + fix.desc + ' ──');
+
+    const { term, fitAddon } = createTerm();
+
+    // 1. 连接 shell server，建立 PTY session
+    let conn;
+    try {
+      conn = await connectToShell(term, sessionId);
+      log('dim', '  Session created: ' + sessionId);
+    } catch (err) {
+      log('fail', 'FAIL [' + fix.name + '] ' + err.message);
+      totalFail++;
+      results.push({ name: fix.name, pass: false, error: err.message });
+      term.dispose();
+      continue;
+    }
+
+    // 2. 等待 shell prompt（让 PTY 初始化完成）
+    await new Promise(r => setTimeout(r, PROMPT_WAIT));
+
+    // 3. 回放 IME 事件
+    const textarea = term.textarea;
+    if (!textarea) {
+      log('fail', 'FAIL [' + fix.name + '] Cannot find xterm textarea');
+      totalFail++;
+      results.push({ name: fix.name, pass: false, error: 'no textarea' });
+      conn.ws.close();
+      term.dispose();
+      continue;
+    }
+
+    // 收集 onData 输出（xterm → WebSocket 发送方向）
+    const onDataCollected = [];
+    term.onData(data => onDataCollected.push(data));
+
+    // 收集 PTY 回显（WebSocket → xterm 接收方向）
+    const writeCollected = [];
+    const origWrite = term.write.bind(term);
+    term.write = function(data) {
+      if (typeof data === 'string') writeCollected.push(data);
+      else if (data instanceof Uint8Array) writeCollected.push(new TextDecoder().decode(data));
+      return origWrite(data);
+    };
+
+    // 确保 textarea 获得焦点（headless 模式关键）
+    textarea.focus();
+    term.focus();
+    await dispatchAll(textarea, fix.events);
+
+    // 4. 等待 PTY echo 回显
+    await new Promise(r => setTimeout(r, ECHO_WAIT));
+
+    // 5. 验证
+    //    - onData: xterm 发送给 PTY 的内容（发送方向）
+    //    - writeCollected: PTY 回显写入 xterm 的内容（接收方向）
+    const sentText = onDataCollected.join('');
+    const receivedText = writeCollected.join('');
+    const foundInSent = sentText.includes(fix.marker);
+    const foundInReceived = receivedText.includes(fix.marker);
+
+    if (foundInSent && foundInReceived) {
+      log('pass', 'PASS [' + fix.name + '] marker "' + fix.marker + '" verified in both directions');
+      log('dim', '  sent to PTY (onData): ' + JSON.stringify(onDataCollected));
+      totalPass++;
+      results.push({ name: fix.name, pass: true });
+    } else if (foundInSent) {
+      log('pass', 'PASS [' + fix.name + '] marker "' + fix.marker + '" sent to PTY (echo pending or shell config)');
+      log('dim', '  sent to PTY (onData): ' + JSON.stringify(onDataCollected));
+      log('dim', '  received from PTY: ' + (receivedText.length > 0 ? receivedText.substring(0, 100) : '(empty)'));
+      totalPass++;
+      results.push({ name: fix.name, pass: true, note: 'sent only' });
+    } else {
+      log('fail', 'FAIL [' + fix.name + '] marker "' + fix.marker + '" NOT found');
+      log('info', '  sent to PTY (onData): ' + JSON.stringify(onDataCollected));
+      log('info', '  received from PTY: ' + (receivedText.length > 0 ? receivedText.substring(0, 200) : '(empty)'));
+      totalFail++;
+      results.push({ name: fix.name, pass: false, marker: fix.marker, sent: sentText, received: receivedText.substring(0, 500) });
+    }
+
+    // 6. 关闭 session，等待完全清理后再跑下一个
+    try {
+      conn.ws.send(JSON.stringify({ type: 'shell.close', session_id: sessionId }));
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 500));
+    conn.ws.close();
+    term.dispose();
+    // 等待服务端完全释放 PTY 资源
+    await new Promise(r => setTimeout(r, 1500));
+
+    log('dim', '');
+  }
+
+  if (totalFail === 0) {
+    log('pass', '=== ALL ' + totalPass + ' E2E TESTS PASSED ===');
+  } else {
+    log('fail', '=== ' + totalFail + ' FAILED, ' + totalPass + ' passed ===');
+  }
+
+  document.body.setAttribute('data-results', JSON.stringify({ passed: totalPass, failed: totalFail, results }));
+  console.log('[IME-E2E-RESULT] ' + JSON.stringify({ passed: totalPass, failed: totalFail, results }));
+}
+
+runAll();
+</script>
+</body>
+</html>

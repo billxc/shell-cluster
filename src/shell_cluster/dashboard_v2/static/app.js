@@ -8,9 +8,13 @@ let tabCounter = 0;
 let loadingSessions = false;
 let daemonWsUrl = 'ws://127.0.0.1:9000'; // TODO: make configurable from frontend
 
-// Derive HTTP base URL from daemon WS URL
+// Convert ws(s):// URL to http(s)://
+function wsToHttp(wsUrl) {
+  return wsUrl.replace(/^ws(s?):/, 'http$1:');
+}
+
 function daemonHttpUrl() {
-  return daemonWsUrl.replace(/^ws(s?):/, 'http$1:');
+  return wsToHttp(daemonWsUrl);
 }
 
 // --- Session names (persisted in localStorage) ---
@@ -33,9 +37,13 @@ function renameSession(tabId) {
   const s = sessions.get(tabId);
   if (!s) return;
   const current = loadSessionNames()[s.sessionId] || '';
-  const name = prompt('Rename session:', current || `${s.shell || 'shell'} #${s.sessionId.slice(0,6)}`);
+  const name = prompt('Rename session:', current || getSessionDisplayName(s));
   if (name === null) return; // cancelled
   saveSessionName(s.sessionId, name.trim());
+  renderAll();
+}
+
+function renderAll() {
   renderTabs();
   renderPeers();
 }
@@ -62,7 +70,7 @@ async function fetchSessions() {
     if (!peer.uri) return;
     try {
       // Derive HTTP URL from ws:// URI: ws://localhost:PORT -> http://localhost:PORT/sessions
-      const httpUrl = peer.uri.replace(/^ws(s?):\/\//, (_, s) => `http${s}://`) + '/sessions';
+      const httpUrl = wsToHttp(peer.uri) + '/sessions';
       const resp = await fetch(httpUrl, { signal: AbortSignal.timeout(3000) });
       const peerSessions = await resp.json();
       if (!Array.isArray(peerSessions)) return;
@@ -88,13 +96,17 @@ async function fetchSessions() {
 }
 
 // --- Refresh everything ---
+async function refreshData() {
+  await fetchPeers();
+  await fetchSessions();
+}
+
 async function refreshAll() {
   const btn = document.getElementById('btn-refresh');
   btn.disabled = true;
   btn.textContent = '... Loading';
   try {
-    await fetchPeers();
-    await fetchSessions();
+    await refreshData();
   } finally {
     btn.disabled = false;
     btn.textContent = '\u21bb Refresh';
@@ -111,8 +123,7 @@ async function discoverPeers() {
     const resp = await fetch(daemonHttpUrl() + '/api/refresh-peers');
     const data = await resp.json();
     if (data.ok) {
-      await fetchPeers();
-      await fetchSessions();
+      await refreshData();
     }
   } catch (e) {
     console.warn('Discovery failed:', e);
@@ -193,8 +204,7 @@ function renderPeers() {
       const item = document.createElement('div');
       item.className = 'session-item remote';
       const age = rs.created_at ? timeAgo(rs.created_at) : '';
-      const customName = loadSessionNames()[rs.id];
-      const displayName = customName || `${rs.shell || 'shell'} #${rs.id.slice(0,6)}`;
+      const displayName = getSessionDisplayName({ sessionId: rs.id, shell: rs.shell });
       item.innerHTML = `
         <span class="session-icon" style="color:var(--blue)">\u21bb</span>
         <span class="session-label">${esc(displayName)}</span>
@@ -270,8 +280,7 @@ function switchTab(tabId) {
     }, 10);
   }
 
-  renderTabs();
-  renderPeers();
+  renderAll();
 }
 
 // --- Session management ---
@@ -312,9 +321,26 @@ function createSession(peer, existingSessionId) {
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(pane);
-  fitAddon.fit();
 
   const sessionId = existingSessionId || genId();
+
+  // Register session early (ws filled in after pane is visible)
+  const sessionState = {
+    ws: null, term, peerName: peer.name, sessionId, pane, fitAddon,
+    shell: '', targetUri: peer.uri, _attachAddon: null,
+  };
+  sessions.set(tabId, sessionState);
+
+  // Make pane visible BEFORE measuring dimensions.
+  // v1 (JSON protocol) sends cols/rows in a message after the pane is visible.
+  // v2 (raw protocol) bakes cols/rows into the URL, so we must ensure the pane
+  // is visible and fitted before constructing the WebSocket URL.
+  document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('active'));
+  pane.classList.add('active');
+  document.getElementById('welcome').style.display = 'none';
+  activeTab = tabId;
+  fitAddon.fit();
+
   const { cols, rows } = term;
   // Connect directly to the peer's /raw endpoint — no proxy needed
   const rawParams = isAttach
@@ -322,12 +348,7 @@ function createSession(peer, existingSessionId) {
     : `session=${sessionId}&cols=${cols}&rows=${rows}`;
   const wsUrl = `${peer.uri}/raw?${rawParams}`;
   const ws = new WebSocket(wsUrl);
-
-  const sessionState = {
-    ws, term, peerName: peer.name, sessionId, pane, fitAddon,
-    shell: '', targetUri: peer.uri, _attachAddon: null,
-  };
-  sessions.set(tabId, sessionState);
+  sessionState.ws = ws;
 
   term.writeln(`\x1b[2m${isAttach ? 'Reconnecting' : 'Connecting'} to ${peer.name}...\x1b[0m`);
 
@@ -335,6 +356,22 @@ function createSession(peer, existingSessionId) {
 
   ws.onmessage = (event) => {
     const data = event.data;
+
+    // After attach addon is active, intercept text-frame control messages
+    // so they don't get written to the terminal as raw JSON
+    if (attached && typeof data === 'string') {
+      try {
+        const msg = JSON.parse(data);
+        if (msg.type === 'shell.closed') {
+          term.writeln('\r\n\x1b[2m[Session closed]\x1b[0m');
+          sessionState._disconnected = true;
+          renderPeers();
+          return;
+        }
+      } catch (e) {
+        // Not JSON — let AttachAddon handle it
+      }
+    }
 
     // Before attach addon takes over, handle text control messages
     if (!attached && typeof data === 'string') {
@@ -344,8 +381,7 @@ function createSession(peer, existingSessionId) {
           sessionState.shell = msg.shell || '?';
           attached = true;
           term.clear();
-          renderTabs();
-          renderPeers();
+          renderAll();
           // Now load attach addon — it takes over binary I/O
           const attachAddon = new AttachAddon.AttachAddon(ws, { bidirectional: true });
           term.loadAddon(attachAddon);
@@ -398,7 +434,8 @@ function createSession(peer, existingSessionId) {
   resizeObserver.observe(pane);
   sessionState._resizeObserver = resizeObserver;
 
-  switchTab(tabId);
+  renderAll();
+  term.focus();
 }
 
 function closeSession(tabId) {
@@ -427,12 +464,11 @@ function closeSession(tabId) {
     } else {
       activeTab = null;
       document.getElementById('welcome').style.display = 'flex';
-      renderTabs();
+      renderAll();
     }
   }
 
-  renderPeers();
-  renderTabs();
+  renderAll();
 }
 
 // --- Helpers ---
@@ -480,21 +516,17 @@ document.addEventListener('keydown', (e) => {
 
 // --- Init ---
 async function init() {
-  await fetchPeers();
-  await fetchSessions();
+  await refreshData();
   renderTabs();
 }
 init();
 
 // Retry at startup for late-starting peers
-setTimeout(() => fetchPeers().then(fetchSessions), 3000);
-setTimeout(() => fetchPeers().then(fetchSessions), 10000);
+setTimeout(refreshData, 3000);
+setTimeout(refreshData, 10000);
 
 // Periodic refresh
-setInterval(async () => {
-  await fetchPeers();
-  await fetchSessions();
-}, 30000);
+setInterval(refreshData, 30000);
 
 // Global resize
 window.addEventListener('resize', () => {

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IME Event Recorder — Shell Cluster</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+header { padding: 12px 20px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+header h1 { font-size: 16px; font-weight: 600; color: #e94560; white-space: nowrap; }
+.controls { display: flex; gap: 8px; align-items: center; }
+button { padding: 6px 14px; border: 1px solid #0f3460; border-radius: 4px; background: #16213e; color: #e0e0e0; cursor: pointer; font-size: 13px; transition: background 0.15s; }
+button:hover { background: #0f3460; }
+button.recording { background: #e94560; border-color: #e94560; color: #fff; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+.status { font-size: 13px; color: #888; }
+.status.active { color: #4ade80; }
+.main { flex: 1; display: flex; min-height: 0; }
+.terminal-panel { flex: 0 0 50%; display: flex; flex-direction: column; border-right: 1px solid #0f3460; }
+.terminal-panel h2, .log-panel h2 { font-size: 13px; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; color: #888; }
+#terminal-container { flex: 1; padding: 8px; overflow: hidden; }
+.log-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.log-table-wrap { flex: 1; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+th { position: sticky; top: 0; background: #16213e; padding: 6px 8px; text-align: left; border-bottom: 1px solid #0f3460; color: #888; font-weight: 500; }
+td { padding: 4px 8px; border-bottom: 1px solid #1a1a2e; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+tr.compositionstart td { color: #60a5fa; }
+tr.compositionupdate td { color: #818cf8; }
+tr.compositionend td { color: #34d399; }
+tr.keydown td { color: #fbbf24; }
+tr.keyup td { color: #a3a3a3; }
+tr.input td { color: #f472b6; }
+.footer { padding: 8px 20px; background: #16213e; border-top: 1px solid #0f3460; display: flex; gap: 12px; align-items: center; }
+.footer label { font-size: 13px; color: #888; }
+.footer input, .footer textarea { padding: 4px 8px; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; color: #e0e0e0; font-size: 13px; font-family: inherit; }
+.footer input[type="text"] { width: 200px; }
+.footer textarea { width: 300px; height: 28px; resize: none; }
+.event-count { font-size: 13px; color: #888; margin-left: auto; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>IME Event Recorder</h1>
+  <div class="controls">
+    <button id="btn-record" onclick="toggleRecording()">Start Recording</button>
+    <button id="btn-clear" onclick="clearEvents()">Clear</button>
+    <button id="btn-download" onclick="downloadJSON()" disabled>Download JSON</button>
+  </div>
+  <span id="status" class="status">Ready — click terminal, activate your IME, and start recording</span>
+</header>
+
+<div class="main">
+  <div class="terminal-panel">
+    <h2>Terminal (type here with your IME)</h2>
+    <div id="terminal-container"></div>
+  </div>
+  <div class="log-panel">
+    <h2>Event Log</h2>
+    <div class="log-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>t (ms)</th>
+            <th>type</th>
+            <th>key</th>
+            <th>code</th>
+            <th>keyCode</th>
+            <th>isComposing</th>
+            <th>data</th>
+            <th>inputType</th>
+          </tr>
+        </thead>
+        <tbody id="event-log"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <label>Expected Output:</label>
+  <input type="text" id="expected-output" placeholder="e.g. 你好">
+  <label>Description:</label>
+  <textarea id="description" placeholder="e.g. Chinese pinyin: nihao → 你好"></textarea>
+  <span id="event-count" class="event-count">0 events</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
+<script>
+const term = new Terminal({
+  cursorBlink: true,
+  fontSize: 14,
+  fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+  theme: {
+    background: '#1a1a2e',
+    foreground: '#e0e0e0',
+    cursor: '#e94560',
+  },
+});
+
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+
+const container = document.getElementById('terminal-container');
+term.open(container);
+fitAddon.fit();
+
+// Local echo so the user can see what they type
+term.onData(data => {
+  // Echo composed text; handle Enter as newline
+  for (const ch of data) {
+    if (ch === '\r') {
+      term.write('\r\n');
+    } else if (ch === '\x7f') {
+      term.write('\b \b');
+    } else {
+      term.write(ch);
+    }
+  }
+});
+
+window.addEventListener('resize', () => fitAddon.fit());
+
+// --- Recorder State ---
+
+let recording = false;
+let events = [];
+let startTime = 0;
+
+const logBody = document.getElementById('event-log');
+const statusEl = document.getElementById('status');
+const btnRecord = document.getElementById('btn-record');
+const btnDownload = document.getElementById('btn-download');
+const eventCountEl = document.getElementById('event-count');
+
+function toggleRecording() {
+  recording = !recording;
+  if (recording) {
+    startTime = performance.now();
+    btnRecord.textContent = 'Stop Recording';
+    btnRecord.classList.add('recording');
+    statusEl.textContent = 'Recording...';
+    statusEl.classList.add('active');
+    btnDownload.disabled = true;
+  } else {
+    btnRecord.textContent = 'Start Recording';
+    btnRecord.classList.remove('recording');
+    statusEl.textContent = `Stopped — ${events.length} events captured`;
+    statusEl.classList.remove('active');
+    btnDownload.disabled = events.length === 0;
+  }
+}
+
+function clearEvents() {
+  events = [];
+  logBody.innerHTML = '';
+  eventCountEl.textContent = '0 events';
+  btnDownload.disabled = true;
+  statusEl.textContent = 'Cleared';
+  statusEl.classList.remove('active');
+}
+
+function recordEvent(evt) {
+  if (!recording) return;
+
+  const t = Math.round(performance.now() - startTime);
+  const record = { t, type: evt.type };
+
+  if (evt instanceof KeyboardEvent) {
+    record.key = evt.key;
+    record.code = evt.code;
+    record.keyCode = evt.keyCode;
+    record.isComposing = evt.isComposing;
+  }
+
+  if (evt instanceof CompositionEvent) {
+    record.data = evt.data;
+  }
+
+  if (evt instanceof InputEvent) {
+    record.data = evt.data;
+    record.inputType = evt.inputType;
+    record.isComposing = evt.isComposing;
+  }
+
+  events.push(record);
+
+  // Update UI
+  const tr = document.createElement('tr');
+  tr.className = evt.type;
+  tr.innerHTML = `
+    <td>${t}</td>
+    <td>${evt.type}</td>
+    <td>${record.key ?? ''}</td>
+    <td>${record.code ?? ''}</td>
+    <td>${record.keyCode ?? ''}</td>
+    <td>${record.isComposing ?? ''}</td>
+    <td>${record.data != null ? JSON.stringify(record.data) : ''}</td>
+    <td>${record.inputType ?? ''}</td>
+  `;
+  logBody.appendChild(tr);
+  tr.scrollIntoView({ block: 'end' });
+
+  eventCountEl.textContent = `${events.length} events`;
+}
+
+// --- Hook xterm textarea ---
+
+const textarea = term.textarea || document.querySelector('.xterm-helper-textarea');
+
+if (textarea) {
+  const eventTypes = [
+    'keydown', 'keyup',
+    'compositionstart', 'compositionupdate', 'compositionend',
+    'input',
+  ];
+  eventTypes.forEach(type => {
+    textarea.addEventListener(type, recordEvent, { capture: true });
+  });
+} else {
+  statusEl.textContent = 'ERROR: Could not find xterm textarea';
+}
+
+// --- Download ---
+
+function downloadJSON() {
+  const fixture = {
+    version: 1,
+    metadata: {
+      description: document.getElementById('description').value || 'IME recording',
+      browser: navigator.userAgent.match(/Chrome\/[\d.]+|Firefox\/[\d.]+|Safari\/[\d.]+/)?.[0] || navigator.userAgent,
+      os: navigator.platform,
+      imeMethod: '',
+      xtermVersion: '6.0.0',
+      recordedAt: new Date().toISOString(),
+    },
+    events: events,
+    expectedOutput: document.getElementById('expected-output').value || '',
+  };
+
+  const blob = new Blob([JSON.stringify(fixture, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+
+  const desc = fixture.metadata.description.replace(/[^a-zA-Z0-9_\u4e00-\u9fff-]/g, '_').substring(0, 40);
+  a.download = `${desc || 'ime_recording'}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Focus the terminal on load
+term.focus();
+</script>
+</body>
+</html>

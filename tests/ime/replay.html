@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IME Replay Verifier — Shell Cluster</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+header { padding: 12px 20px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+header h1 { font-size: 16px; font-weight: 600; color: #60a5fa; white-space: nowrap; }
+.controls { display: flex; gap: 8px; align-items: center; }
+button { padding: 6px 14px; border: 1px solid #0f3460; border-radius: 4px; background: #16213e; color: #e0e0e0; cursor: pointer; font-size: 13px; transition: background 0.15s; }
+button:hover { background: #0f3460; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+input[type="file"] { font-size: 13px; color: #e0e0e0; }
+.status { font-size: 13px; color: #888; }
+.main { flex: 1; display: flex; min-height: 0; }
+.terminal-panel { flex: 0 0 50%; display: flex; flex-direction: column; border-right: 1px solid #0f3460; }
+.terminal-panel h2, .result-panel h2 { font-size: 13px; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; color: #888; }
+#terminal-container { flex: 1; padding: 8px; overflow: hidden; }
+.result-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.result-content { flex: 1; overflow-y: auto; padding: 16px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 13px; }
+.result-section { margin-bottom: 16px; }
+.result-section h3 { font-size: 13px; color: #888; margin-bottom: 6px; }
+.result-section pre { background: #0f0f1a; padding: 10px; border-radius: 4px; border: 1px solid #0f3460; white-space: pre-wrap; word-break: break-all; }
+.pass { color: #4ade80; }
+.fail { color: #ef4444; }
+.info { color: #60a5fa; }
+.warn { color: #fbbf24; }
+.event-progress { padding: 8px 16px; background: #16213e; border-top: 1px solid #0f3460; font-size: 12px; color: #888; }
+.progress-bar { height: 3px; background: #0f3460; border-radius: 2px; margin-top: 4px; }
+.progress-bar-fill { height: 100%; background: #60a5fa; border-radius: 2px; transition: width 0.1s; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>IME Replay Verifier</h1>
+  <div class="controls">
+    <input type="file" id="file-input" accept=".json" onchange="loadFixture(event)">
+    <button id="btn-replay" onclick="startReplay(false)" disabled>Instant Replay</button>
+    <button id="btn-replay-slow" onclick="startReplay(true)" disabled>Slow Replay</button>
+    <button id="btn-reset" onclick="resetTerminal()">Reset</button>
+  </div>
+  <span id="status" class="status">Load a fixture JSON to begin</span>
+</header>
+
+<div class="main">
+  <div class="terminal-panel">
+    <h2>Terminal (replay target)</h2>
+    <div id="terminal-container"></div>
+    <div class="event-progress">
+      <span id="progress-text">—</span>
+      <div class="progress-bar"><div id="progress-fill" class="progress-bar-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+  <div class="result-panel">
+    <h2>Results</h2>
+    <div class="result-content" id="results">
+      <div class="result-section">
+        <h3>Instructions</h3>
+        <pre>1. Load a fixture JSON file recorded with recorder.html
+2. Click "Instant Replay" for fast verification
+3. Click "Slow Replay" to watch events in real time
+4. Results will show PASS/FAIL comparison</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
+<script>
+// --- Terminal Setup ---
+
+let term, fitAddon, textarea;
+let collectedData = [];
+let dataDisposable = null;
+
+function createTerminal() {
+  term = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+    theme: {
+      background: '#1a1a2e',
+      foreground: '#e0e0e0',
+      cursor: '#60a5fa',
+    },
+  });
+
+  fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+
+  const container = document.getElementById('terminal-container');
+  container.innerHTML = '';
+  term.open(container);
+  fitAddon.fit();
+
+  // Local echo
+  term.onData(data => {
+    for (const ch of data) {
+      if (ch === '\r') term.write('\r\n');
+      else if (ch === '\x7f') term.write('\b \b');
+      else term.write(ch);
+    }
+  });
+
+  textarea = term.textarea || document.querySelector('.xterm-helper-textarea');
+}
+
+createTerminal();
+window.addEventListener('resize', () => fitAddon && fitAddon.fit());
+
+// --- Fixture Loading ---
+
+let fixture = null;
+
+function loadFixture(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      fixture = JSON.parse(e.target.result);
+      if (!fixture.events || !Array.isArray(fixture.events)) {
+        throw new Error('Invalid fixture: missing events array');
+      }
+
+      document.getElementById('btn-replay').disabled = false;
+      document.getElementById('btn-replay-slow').disabled = false;
+      document.getElementById('status').textContent =
+        `Loaded: ${fixture.metadata?.description || file.name} (${fixture.events.length} events)`;
+
+      showResults([
+        { type: 'info', title: 'Fixture Loaded', content: [
+          `Description: ${fixture.metadata?.description || 'N/A'}`,
+          `Browser: ${fixture.metadata?.browser || 'N/A'}`,
+          `OS: ${fixture.metadata?.os || 'N/A'}`,
+          `IME: ${fixture.metadata?.imeMethod || 'N/A'}`,
+          `Events: ${fixture.events.length}`,
+          `Expected Output: "${fixture.expectedOutput || ''}"`,
+        ].join('\n') },
+      ]);
+    } catch (err) {
+      document.getElementById('status').textContent = `Error: ${err.message}`;
+    }
+  };
+  reader.readAsText(file);
+}
+
+// --- Event Dispatch ---
+
+function dispatchRecordedEvent(evt) {
+  if (!textarea) return;
+
+  if (evt.type === 'keydown' || evt.type === 'keyup') {
+    textarea.dispatchEvent(new KeyboardEvent(evt.type, {
+      key: evt.key || '',
+      code: evt.code || '',
+      keyCode: evt.keyCode || 0,
+      which: evt.keyCode || 0,
+      isComposing: evt.isComposing || false,
+      bubbles: true,
+      cancelable: true,
+    }));
+  } else if (evt.type === 'compositionstart' || evt.type === 'compositionupdate' || evt.type === 'compositionend') {
+    // Set textarea value before composition events (browser workaround)
+    if (evt.data != null) {
+      textarea.value = evt.data;
+    }
+    textarea.dispatchEvent(new CompositionEvent(evt.type, {
+      data: evt.data || '',
+      bubbles: true,
+      cancelable: true,
+    }));
+  } else if (evt.type === 'input') {
+    if (evt.data != null) {
+      textarea.value = evt.data;
+    }
+    textarea.dispatchEvent(new InputEvent(evt.type, {
+      data: evt.data || null,
+      inputType: evt.inputType || '',
+      isComposing: evt.isComposing || false,
+      bubbles: true,
+      cancelable: true,
+    }));
+  }
+}
+
+// --- Replay ---
+
+let replayAbort = false;
+
+async function startReplay(slow) {
+  if (!fixture) return;
+
+  replayAbort = false;
+  document.getElementById('btn-replay').disabled = true;
+  document.getElementById('btn-replay-slow').disabled = true;
+
+  // Reset terminal and data collection
+  resetTerminal();
+  collectedData = [];
+
+  // Collect onData output
+  if (dataDisposable) dataDisposable.dispose();
+  dataDisposable = term.onData(data => {
+    collectedData.push(data);
+  });
+
+  term.focus();
+  const total = fixture.events.length;
+  const progressText = document.getElementById('progress-text');
+  const progressFill = document.getElementById('progress-fill');
+
+  document.getElementById('status').textContent = slow ? 'Replaying (real-time)...' : 'Replaying (instant)...';
+
+  if (slow) {
+    // Real-time replay using recorded timestamps
+    let prevT = 0;
+    for (let i = 0; i < total; i++) {
+      if (replayAbort) break;
+      const evt = fixture.events[i];
+      const delay = Math.max(0, (evt.t || 0) - prevT);
+      prevT = evt.t || 0;
+
+      if (delay > 0) {
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      dispatchRecordedEvent(evt);
+      progressText.textContent = `${i + 1} / ${total} — ${evt.type}`;
+      progressFill.style.width = `${((i + 1) / total) * 100}%`;
+    }
+  } else {
+    // Instant replay — dispatch all events synchronously
+    for (let i = 0; i < total; i++) {
+      dispatchRecordedEvent(fixture.events[i]);
+      if (i % 10 === 0) {
+        progressText.textContent = `${i + 1} / ${total}`;
+        progressFill.style.width = `${((i + 1) / total) * 100}%`;
+      }
+    }
+    progressText.textContent = `${total} / ${total} — done`;
+    progressFill.style.width = '100%';
+  }
+
+  // Wait a tick for any deferred processing (xterm uses setTimeout(0) in CompositionHelper)
+  await new Promise(r => setTimeout(r, 50));
+
+  // Verify
+  verifyResult();
+
+  document.getElementById('btn-replay').disabled = false;
+  document.getElementById('btn-replay-slow').disabled = false;
+}
+
+function verifyResult() {
+  const collected = collectedData.join('');
+  const expected = fixture.expectedOutput || '';
+
+  const results = [];
+
+  // Metadata
+  results.push({
+    type: 'info',
+    title: 'Fixture',
+    content: fixture.metadata?.description || 'N/A',
+  });
+
+  // Collected output
+  results.push({
+    type: 'info',
+    title: 'Collected onData Output',
+    content: collected ? `"${collected}" (${collected.length} chars)\nHex: ${toHex(collected)}` : '(empty)',
+  });
+
+  // Expected
+  results.push({
+    type: 'info',
+    title: 'Expected Output',
+    content: expected ? `"${expected}" (${expected.length} chars)\nHex: ${toHex(expected)}` : '(not set)',
+  });
+
+  // Comparison
+  if (!expected) {
+    results.push({
+      type: 'warn',
+      title: 'Verification',
+      content: 'No expectedOutput set in fixture — cannot verify. Check collected output manually.',
+    });
+  } else if (collected === expected) {
+    results.push({
+      type: 'pass',
+      title: 'PASS',
+      content: `Output matches expected: "${expected}"`,
+    });
+  } else if (collected.includes(expected)) {
+    results.push({
+      type: 'pass',
+      title: 'PASS (contains)',
+      content: `Collected output contains expected text.\nCollected: "${collected}"\nExpected:  "${expected}"`,
+    });
+  } else {
+    results.push({
+      type: 'fail',
+      title: 'FAIL',
+      content: `Output does not match.\nCollected: "${collected}"\nExpected:  "${expected}"\n\nCollected hex: ${toHex(collected)}\nExpected hex:  ${toHex(expected)}`,
+    });
+  }
+
+  // Event summary
+  const compositionEvents = fixture.events.filter(e => e.type.startsWith('composition'));
+  const keyEvents = fixture.events.filter(e => e.type === 'keydown' || e.type === 'keyup');
+  const imeKeydowns = fixture.events.filter(e => e.type === 'keydown' && e.keyCode === 229);
+  results.push({
+    type: 'info',
+    title: 'Event Summary',
+    content: [
+      `Total events: ${fixture.events.length}`,
+      `Composition events: ${compositionEvents.length}`,
+      `Key events: ${keyEvents.length}`,
+      `IME keydowns (keyCode=229): ${imeKeydowns.length}`,
+      `Duration: ${fixture.events.length > 0 ? fixture.events[fixture.events.length - 1].t : 0}ms`,
+    ].join('\n'),
+  });
+
+  showResults(results);
+  document.getElementById('status').textContent =
+    results.some(r => r.type === 'fail') ? 'FAIL' :
+    results.some(r => r.type === 'pass') ? 'PASS' : 'Done';
+}
+
+function toHex(str) {
+  return Array.from(str).map(ch => {
+    const cp = ch.codePointAt(0);
+    return cp > 0x7f ? `U+${cp.toString(16).toUpperCase().padStart(4, '0')}` : ch;
+  }).join(' ');
+}
+
+function showResults(items) {
+  const el = document.getElementById('results');
+  el.innerHTML = items.map(item => `
+    <div class="result-section">
+      <h3 class="${item.type}">${item.title}</h3>
+      <pre>${escapeHtml(item.content)}</pre>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function resetTerminal() {
+  replayAbort = true;
+  if (dataDisposable) {
+    dataDisposable.dispose();
+    dataDisposable = null;
+  }
+  collectedData = [];
+  term.dispose();
+  createTerminal();
+  document.getElementById('progress-text').textContent = '—';
+  document.getElementById('progress-fill').style.width = '0%';
+}
+</script>
+</body>
+</html>

@@ -93,6 +93,8 @@ class ShellManager:
 
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
+        env.setdefault("LANG", "en_US.UTF-8")
+        env.setdefault("LC_CTYPE", "en_US.UTF-8")
 
         pid = os.fork()
         if pid == 0:
@@ -106,8 +108,16 @@ class ShellManager:
             if slave_fd > 2:
                 os.close(slave_fd)
             # Close all inherited FDs (server sockets, other PTY masters, pipes)
-            # to prevent the child from holding them open after exec
-            os.closerange(3, os.sysconf("SC_OPEN_MAX"))
+            # to prevent the child from holding them open after exec.
+            # os.sysconf("SC_OPEN_MAX") can overflow on Python 3.14/macOS,
+            # so cap it to a reasonable value.
+            try:
+                max_fd = os.sysconf("SC_OPEN_MAX")
+            except (ValueError, OSError):
+                max_fd = 1024
+            if max_fd > 65536:
+                max_fd = 65536
+            os.closerange(3, max_fd)
             os.execvpe(shell_cmd, [shell_cmd], env)
             os._exit(1)
 

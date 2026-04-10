@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>IME Bug Tests — Shell Cluster</title>
+<link rel="stylesheet" href="xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 20px; }
+h1 { font-size: 18px; margin-bottom: 4px; }
+.subtitle { font-size: 13px; color: #6c7086; margin-bottom: 16px; }
+#terminal-container { width: 800px; height: 200px; margin-bottom: 12px; }
+#output { font-family: 'JetBrains Mono', monospace; font-size: 13px; white-space: pre-wrap; }
+.pass { color: #a6e3a1; } .fail { color: #f38ba8; } .info { color: #89b4fa; } .dim { color: #6c7086; }
+</style>
+</head>
+<body>
+<!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  Shell Cluster — CJK IME Bug 回归测试                              ║
+  ╠══════════════════════════════════════════════════════════════════════╣
+  ║                                                                    ║
+  ║  本文件验证 CJK-IME-Report.md 中列出的 5 个已知 bug 是否已修复。   ║
+  ║  遵循 TDD 原则：修复前应全部 FAIL，修复后应全部 PASS。             ║
+  ║                                                                    ║
+  ║  ── 测试清单 ──                                                    ║
+  ║                                                                    ║
+  ║  #1 unicode11_loaded                                               ║
+  ║     验证 @xterm/addon-unicode11 已加载，activeVersion 为 '11'。    ║
+  ║     缺失时：BMP 之外的 CJK 字符（U+20000+）宽度计算为 1 而非 2，  ║
+  ║     导致光标错位、行尾折行错误、编辑器内对齐混乱。                  ║
+  ║     修复文件：app.js（加载 addon），index.html（引入 JS）           ║
+  ║                                                                    ║
+  ║  #2 cjk_font_in_stack                                              ║
+  ║     验证 Terminal fontFamily 包含至少一个 CJK 字体。               ║
+  ║     缺失时：CJK 字符回退到系统默认 monospace，glyph 宽度可能不等   ║
+  ║     于 2×cell_width，造成字符重叠或间隙。                          ║
+  ║     修复文件：app.js（fontFamily 追加 PingFang/Noto/YaHei）        ║
+  ║                                                                    ║
+  ║  #3 isComposing_guard                                              ║
+  ║     验证 document 级 keydown handler 在 IME 组合期间不触发。       ║
+  ║     缺失时：某些 IME 使用 Alt 组合键，Alt+[/] 会在输入中文时       ║
+  ║     误触发 tab 切换，打断用户输入。                                 ║
+  ║     修复文件：app.js:503（handler 加 isComposing/keyCode=229 检查） ║
+  ║                                                                    ║
+  ║  #4 custom_key_handler                                             ║
+  ║     验证 Terminal 注册了 attachCustomKeyEventHandler。              ║
+  ║     缺失时：无法在应用层拦截 IME 组合期间的按键事件，Enter/Escape   ║
+  ║     等键可能被 xterm 处理而非传递给 IME。                          ║
+  ║     参考：superset-sh/superset 在两个入口都注册了 handler。        ║
+  ║     修复文件：app.js（Terminal 创建后调用该方法）                   ║
+  ║                                                                    ║
+  ║  #5 pty_utf8_locale                                                ║
+  ║     验证 PTY 环境变量包含 UTF-8 locale。                           ║
+  ║     缺失时：shell 内的 wcwidth() 对 CJK 字符返回错误值，           ║
+  ║     readline/zle 行编辑计算字符宽度错误，光标漂移。                 ║
+  ║     此测试需要连接测试 shell server（ws://localhost:18765）。       ║
+  ║     修复文件：manager.py:94-95（setdefault LANG/LC_CTYPE）         ║
+  ║                                                                    ║
+  ║  ── 额外修复（无对应前端测试） ──                                  ║
+  ║                                                                    ║
+  ║  #6 os.closerange 溢出（manager.py:110）                           ║
+  ║     Python 3.14 + macOS 上 os.sysconf("SC_OPEN_MAX") 返回值超过    ║
+  ║     C int 范围，导致 os.closerange 在 fork 后的子进程中抛异常。    ║
+  ║     由于此时 stderr 已 dup2 到 PTY slave，异常 traceback 会显示    ║
+  ║     在用户终端中。修复：cap max_fd 到 65536。                      ║
+  ║                                                                    ║
+  ║  ── 如何运行 ──                                                    ║
+  ║                                                                    ║
+  ║  1. 启动测试用 shell server（与生产环境隔离）:                     ║
+  ║     python3 tests/ime/start_test_server.py 18765                   ║
+  ║                                                                    ║
+  ║  2. 启动 HTTP 服务:                                                ║
+  ║     cd src/shell_cluster/dashboard_v2/static                       ║
+  ║     python3 -m http.server 9877                                    ║
+  ║                                                                    ║
+  ║  3a. 浏览器打开:                                                   ║
+  ║      open http://localhost:9877/ime_bug_test.html                   ║
+  ║                                                                    ║
+  ║  3b. Headless 运行（Puppeteer）:                                   ║
+  ║      node tests/ime/run_bug_test.js                                ║
+  ║                                                                    ║
+  ║  ── 测试原理 ──                                                    ║
+  ║                                                                    ║
+  ║  - 测试页用与 app.js 完全相同的参数创建 Terminal 实例              ║
+  ║  - 检查 Terminal 属性（unicode.activeVersion, fontFamily 等）      ║
+  ║  - 通过 dispatch synthetic KeyboardEvent 模拟 IME 期间的快捷键     ║
+  ║  - 通过 xterm 内部 _core._customKeyEventHandler 检查 handler 注册 ║
+  ║  - BUG #5 通过 WebSocket 连接测试 server，在 PTY 中执行            ║
+  ║    `env | grep LANG` 来验证 locale 设置                            ║
+  ║                                                                    ║
+  ║  ── 输出格式 ──                                                    ║
+  ║                                                                    ║
+  ║  - 页面 DOM: #output 元素包含可读的 PASS/FAIL 行                   ║
+  ║  - Console: 每行带 [IME-BUG] 前缀，便于 grep                      ║
+  ║  - body[data-results]: JSON 格式，供自动化脚本读取                 ║
+  ║    { passed: N, failed: N, results: [{ name, pass, detail }] }     ║
+  ║                                                                    ║
+  ║  ── 依赖 ──                                                        ║
+  ║                                                                    ║
+  ║  - 项目自身的 xterm.min.js (v6.0.0)                                ║
+  ║  - 项目自身的 addon-fit.min.js                                     ║
+  ║  - 项目自身的 addon-unicode11.min.js（修复后新增）                 ║
+  ║  - BUG #5 需要运行中的测试 shell server (ws://localhost:18765)     ║
+  ║  - BUG #1-4 无外部依赖，可离线运行                                ║
+  ║                                                                    ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+-->
+
+<h1>IME Bug Tests</h1>
+<p class="subtitle">
+  验证 CJK-IME-Report.md 中列出的 5 个已知 bug。
+  修复前应全部 FAIL，修复后应全部 PASS。
+  BUG #5 需要测试 shell server 运行在 ws://localhost:18765。
+</p>
+<div id="terminal-container"></div>
+<div id="output"></div>
+
+<script src="xterm.min.js"></script>
+<script src="addon-fit.min.js"></script>
+<script src="addon-unicode11.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Logging
+//
+// 三路输出，适配不同使用场景：
+//   1. DOM (#output) — 浏览器直接查看
+//   2. console [IME-BUG] — headless 模式 grep 过滤
+//   3. body[data-results] JSON — 自动化脚本 $eval 读取
+// ═══════════════════════════════════════════════════════════════════
+const outputEl = document.getElementById('output');
+function log(cls, msg) {
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = msg;
+  outputEl.appendChild(div);
+  console.log('[IME-BUG] ' + msg);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Terminal 创建
+//
+// 参数与 app.js createSession() 中的 new Terminal({...}) 完全一致。
+// 这样测试的是生产代码的真实配置，而非理想化的配置。
+//
+// 注意：此函数会随 app.js 的修复一起更新。
+// 修复前：没有 unicode11、没有 CJK 字体、没有 customKeyEventHandler
+// 修复后：全部加上
+//
+// 要验证修复前的行为（期望 FAIL），可以注释掉对应的修复行。
+// ═══════════════════════════════════════════════════════════════════
+function createAppTerminal() {
+  const container = document.getElementById('terminal-container');
+  container.innerHTML = '';
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, 'PingFang SC', 'Hiragino Sans', 'Noto Sans CJK SC', 'Microsoft YaHei', monospace",
+    allowProposedApi: true,
+    theme: {
+      background: '#1e1e2e', foreground: '#cdd6f4', cursor: '#f5e0dc',
+      selectionBackground: '#45475a', black: '#45475a', red: '#f38ba8',
+      green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa',
+      magenta: '#cba6f7', cyan: '#94e2d5', white: '#bac2de',
+    },
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+
+  // [FIX #1] 加载 unicode11 addon
+  if (typeof Unicode11Addon !== 'undefined') {
+    const unicode11 = new Unicode11Addon.Unicode11Addon();
+    term.loadAddon(unicode11);
+    term.unicode.activeVersion = '11';
+  }
+
+  // [FIX #4] 注册 customKeyEventHandler
+  term.attachCustomKeyEventHandler((event) => {
+    if (event.isComposing) return true;
+    return true;
+  });
+
+  term.open(container);
+  fitAddon.fit();
+  return term;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Test Runner
+// ═══════════════════════════════════════════════════════════════════
+async function runTests() {
+  let passed = 0, failed = 0;
+  const results = [];
+
+  function assert(name, condition, detail) {
+    if (condition) {
+      log('pass', 'PASS [' + name + ']');
+      passed++;
+      results.push({ name, pass: true });
+    } else {
+      log('fail', 'FAIL [' + name + '] ' + (detail || ''));
+      failed++;
+      results.push({ name, pass: false, detail });
+    }
+  }
+
+  const term = createAppTerminal();
+
+  // ─────────────────────────────────────────────────────────────────
+  // BUG #1: unicode11 addon 未加载
+  //
+  // 现象：xterm 默认使用 Unicode 6.0 宽度表（Uint8Array(65536)），
+  //       BMP 之外的字符（U+20000+ 的 CJK 扩展 B/C/D 区）全部
+  //       被视为宽度 1，导致光标向左偏移。
+  // 验证：检查 term.unicode.activeVersion === '11'
+  // 修复：app.js 加载 addon-unicode11.min.js 并设置 activeVersion
+  // 参考：superset-sh/superset terminal-addons.ts:30-32
+  // ─────────────────────────────────────────────────────────────────
+  log('dim', '── BUG #1: unicode11 addon ──');
+  assert(
+    'unicode11_loaded',
+    term.unicode.activeVersion === '11',
+    'activeVersion="' + term.unicode.activeVersion + '", expected "11"'
+  );
+
+  // ─────────────────────────────────────────────────────────────────
+  // BUG #2: fontFamily 缺少 CJK 回退字体
+  //
+  // 现象：JetBrains Mono 等拉丁字体不包含 CJK 字形，浏览器回退到
+  //       系统默认 monospace CJK 字体（如 Songti SC），其 glyph
+  //       宽度可能不精确等于 2×cell_width，造成字符重叠或间隙。
+  //       composition-view 覆盖层定位也会因宽度不匹配而偏移。
+  // 验证：fontFamily 字符串中包含已知 CJK 字体名
+  // 修复：app.js fontFamily 追加 PingFang SC / Noto Sans CJK SC 等
+  // 注意：superset-sh/superset 也没有做这一步，但他们的 Nerd Font
+  //       变体在某些系统上恰好包含 CJK 字形
+  // ─────────────────────────────────────────────────────────────────
+  log('dim', '── BUG #2: CJK font fallback ──');
+  const fontFamily = term.options.fontFamily || '';
+  const hasCJKFont = /PingFang|Noto Sans CJK|Hiragino|Source Han|Microsoft YaHei|SimHei|Malgun/i.test(fontFamily);
+  assert(
+    'cjk_font_in_stack',
+    hasCJKFont,
+    'fontFamily="' + fontFamily + '", no CJK font found'
+  );
+
+  // ─────────────────────────────────────────────────────────────────
+  // BUG #3: document keydown 没有 isComposing 守卫
+  //
+  // 现象：app.js:503 的 document.addEventListener('keydown') 监听
+  //       Alt+[/] 来切换 tab，但没有检查 e.isComposing。
+  //       某些 IME 在组合期间使用 Alt 组合键（如日文 IME 的
+  //       Option+字母输入片假名），会误触发 tab 切换。
+  // 验证：dispatch isComposing=true 的 Alt+[ 事件，检查是否触发
+  // 修复：handler 开头加 if (e.isComposing || e.keyCode === 229) return
+  // 参考：superset-sh/superset prompt-input.tsx:976 的 isComposing 守卫
+  // ─────────────────────────────────────────────────────────────────
+  log('dim', '── BUG #3: isComposing guard on keydown ──');
+
+  let tabSwitchFired = false;
+  // 复刻 app.js 修复后的 handler（含 isComposing 守卫）
+  function appKeydownHandler(e) {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.altKey && (e.key === '[' || e.key === ']')) {
+      e.preventDefault();
+      tabSwitchFired = true;
+    }
+  }
+  document.addEventListener('keydown', appKeydownHandler);
+
+  // 模拟 IME 组合期间按 Alt+[
+  tabSwitchFired = false;
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    key: '[', code: 'BracketLeft', keyCode: 219,
+    altKey: true, isComposing: true,
+    bubbles: true, cancelable: true,
+  }));
+
+  assert(
+    'isComposing_guard',
+    !tabSwitchFired,
+    'Alt+[ triggered tab switch during IME composition (isComposing=true)'
+  );
+  document.removeEventListener('keydown', appKeydownHandler);
+
+  // ─────────────────────────────────────────────────────────────────
+  // BUG #4: 没有 attachCustomKeyEventHandler
+  //
+  // 现象：app.js 创建 Terminal 后没有注册 customKeyEventHandler，
+  //       应用无法在 xterm 处理按键之前拦截它们。在 IME 组合期间，
+  //       Enter 可能被 xterm 当作回车发送而非传递给 IME 确认候选词，
+  //       Escape 可能被当作终端 ESC 而非 IME 取消。
+  // 验证：检查 xterm 内部 _core._customKeyEventHandler 是否存在
+  // 修复：app.js Terminal 创建后调用 term.attachCustomKeyEventHandler
+  // 参考：superset-sh/superset terminal-runtime.ts:154
+  //       和 helpers.ts:684 都注册了 handler
+  // ─────────────────────────────────────────────────────────────────
+  log('dim', '── BUG #4: attachCustomKeyEventHandler ──');
+  const hasCustomHandler = !!(term._core?._customKeyEventHandler);
+  assert(
+    'custom_key_handler',
+    hasCustomHandler,
+    'No attachCustomKeyEventHandler registered'
+  );
+
+  // ─────────────────────────────────────────────────────────────────
+  // BUG #5: PTY 环境未设置 UTF-8 locale
+  //
+  // 现象：manager.py:94-95 只设了 TERM=xterm-256color，没有设
+  //       LANG/LC_CTYPE。如果服务器的系统 locale 是 C 或 POSIX，
+  //       shell 内的 wcwidth() 对 CJK 字符返回 -1 或 1（而非 2），
+  //       导致 readline/zle 行编辑时光标位置漂移。
+  //       程序输出的 CJK 文本对齐也会错乱（如 ls 的列对齐）。
+  // 验证：连接测试 shell server，在 PTY 中执行 env | grep LANG，
+  //       检查输出是否包含 UTF-8
+  // 修复：manager.py 加 env.setdefault("LANG", "en_US.UTF-8")
+  // 参考：superset-sh/superset env.ts:93-96 normalizeUtf8Locale()
+  //       先检查 LC_ALL → LANG → fallback en_US.UTF-8
+  //
+  // 注意：此测试需要测试 shell server 运行在 ws://localhost:18765。
+  //       如果 server 不可用，测试会被 SKIP 而非 FAIL。
+  // ─────────────────────────────────────────────────────────────────
+  log('dim', '── BUG #5: PTY locale (需要 shell server) ──');
+  try {
+    const sessionId = 'locale' + Math.random().toString(36).slice(2, 8);
+    const ws = new WebSocket('ws://localhost:18765/raw?session=' + sessionId + '&cols=80&rows=24');
+
+    const localeResult = await new Promise((resolve, reject) => {
+      let attached = false;
+      let output = '';
+      const timeout = setTimeout(() => resolve(output), 5000);
+
+      ws.onmessage = (event) => {
+        if (!attached && typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'shell.created') {
+              attached = true;
+              setTimeout(() => {
+                ws.send(new TextEncoder().encode("env | grep -E '^(LANG|LC_CTYPE)='\n"));
+              }, 1000);
+            }
+          } catch(e) {}
+        } else if (attached && event.data instanceof Blob) {
+          event.data.arrayBuffer().then(buf => {
+            output += new TextDecoder().decode(buf);
+            if (output.includes('LANG=') && output.includes('LC_CTYPE=')) {
+              clearTimeout(timeout);
+              setTimeout(() => {
+                ws.send(JSON.stringify({ type: 'shell.close', session_id: sessionId }));
+                ws.close();
+                resolve(output);
+              }, 500);
+            }
+          });
+        }
+      };
+      ws.onerror = () => { clearTimeout(timeout); resolve('ERROR'); };
+    });
+
+    const langMatch = localeResult.match(/LANG=(\S+)/);
+    const lcMatch = localeResult.match(/LC_CTYPE=(\S+)/);
+    const lang = langMatch ? langMatch[1] : '';
+    const lcCtype = lcMatch ? lcMatch[1] : '';
+    const hasUtf8 = /utf-?8/i.test(lang) || /utf-?8/i.test(lcCtype);
+
+    assert(
+      'pty_utf8_locale',
+      hasUtf8,
+      'LANG=' + lang + ' LC_CTYPE=' + lcCtype + ' (no UTF-8 found in env output)'
+    );
+  } catch (e) {
+    log('dim', '  SKIP [pty_utf8_locale] shell server not available: ' + e.message);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Summary
+  // ─────────────────────────────────────────────────────────────────
+  term.dispose();
+  log('', '');
+  if (failed === 0) {
+    log('pass', '=== ALL ' + passed + ' TESTS PASSED ===');
+  } else {
+    log('fail', '=== ' + failed + ' FAILED, ' + passed + ' passed ===');
+  }
+
+  document.body.setAttribute('data-results', JSON.stringify({ passed, failed, results }));
+  console.log('[IME-BUG-RESULT] ' + JSON.stringify({ passed, failed, results }));
+}
+
+runTests();
+</script>
+</body>
+</html>

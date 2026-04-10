@@ -59,11 +59,17 @@ src/shell_cluster/
 │   ├── base.py          # 抽象后端 + 命名工具
 │   ├── devtunnel.py     # MS Dev Tunnel 实现
 │   └── discovery.py     # 通过 tunnel API 发现节点
-└── web/                 # ── Web Dashboard ──
+├── web/                 # ── Web Dashboard（API + WS 代理，端口 9000）──
+│   ├── __init__.py
+│   ├── server.py         # HTTP + WebSocket 代理服务器
+│   └── static/
+│       └── index.html    # xterm.js 单页 Dashboard（v1）
+└── dashboard_v2/        # ── Dashboard v2（静态 UI，端口 9001）──
     ├── __init__.py
-    ├── server.py         # HTTP + WebSocket 代理服务器
+    ├── __main__.py       # 模块入口
+    ├── server.py         # 静态文件 HTTP 服务（子进程）
     └── static/
-        └── index.html    # xterm.js 单页 Dashboard
+        └── ...           # 新版 Dashboard UI 资源
 ```
 
 ### 分层设计
@@ -72,7 +78,8 @@ src/shell_cluster/
 |----|------|------|
 | **Shell** | `shell/manager.py`, `shell/server.py` | PTY、WebSocket、协议 |
 | **Tunnel** | `tunnel/base.py`, `tunnel/devtunnel.py`, `tunnel/discovery.py` | Tunnel 生命周期、节点发现 |
-| **Web** | `web/server.py`, `web/static/` | HTTP、WebSocket 代理 |
+| **Web** | `web/server.py`, `web/static/` | HTTP API、WebSocket 代理（端口 9000） |
+| **Dashboard v2** | `dashboard_v2/server.py`, `dashboard_v2/static/` | 静态 UI 服务（端口 9001，子进程） |
 | **编排** | `daemon.py`, `cli.py` | 组合两层（组合根） |
 | **共享** | `models.py`, `protocol.py`, `config.py` | 纯数据结构 |
 
@@ -149,30 +156,48 @@ Shell 层和 Tunnel 层 **零交叉导入**。
 编排所有组件：
 ```
 start:
-  1. 检查 devtunnel 是否安装和登录（tunnel 模式）
-  2. 如果没有配置文件，自动注册（提示输入节点名）
-  3. 绑定 WebSocket 服务（tunnel 模式随机端口，本地模式固定端口）
-  4. ensure_tunnel() + host()（仅 tunnel 模式）
-  5. 启动 discovery 循环（5 分钟间隔，仅 tunnel 模式）
-  6. 启动健康检查循环（10 秒 HTTP ping 各节点的 /sessions）
-  7. 启动 dashboard 服务 (:9000)
-  8. 注册 atexit 清理子进程
+  1. 快速失败：检查端口 9000 和 9001 是否可用
+  2. 检查 devtunnel 是否安装和登录（tunnel 模式）
+  3. 如果没有配置文件，自动注册（提示输入节点名）
+  4. 绑定 WebSocket 服务（tunnel 模式随机端口，本地模式固定端口）
+  5. ensure_tunnel() + host()（仅 tunnel 模式）
+  6. 启动 discovery 循环（5 分钟间隔，仅 tunnel 模式）
+  7. 启动健康检查循环（10 秒 HTTP ping 各节点的 /sessions）
+  8. 启动 Dashboard API + WS 代理服务 (:9000)
+  9. 启动 Dashboard v2 UI 服务 (:9001) 作为子进程（除非 --no-dashboard）
+  10. 注册 atexit 清理子进程
 
 stop:
   1. 停止 discovery + 健康检查
-  2. 停止 dashboard 服务
-  3. 停止 WebSocket 服务
-  4. 杀掉 devtunnel connect 进程（节点连接）
-  5. 杀掉 devtunnel host 进程
-  6. 保留 tunnel（依赖过期机制清理）
+  2. 杀掉 Dashboard v2 子进程
+  3. 停止 Dashboard API 服务
+  4. 停止 WebSocket 服务
+  5. 杀掉 devtunnel connect 进程（节点连接）
+  6. 杀掉 devtunnel host 进程
+  7. 保留 tunnel（依赖过期机制清理）
 ```
 
 **健康检查循环**: 每 10 秒 HTTP GET 各连接节点的 `/sessions` 端点。当节点不可达时，杀掉对应的 `devtunnel connect` 进程，确保下次 discovery 刷新时能重新建立连接。
 
-### 7. Web Dashboard（`web/server.py`, `web/static/index.html`）
-- Python: HTTP 服务（提供 HTML）+ WebSocket 代理 + REST API（`/api/peers`, `/api/refresh-peers`）
-- HTML: 单页应用，xterm.js，Catppuccin 主题
-- 连接流程: 浏览器 → WS 代理 (:9000) → 初始化消息 → 代理连接 peer → 双向转发
+### 7. Web Dashboard
+
+Dashboard 由两个服务组成，均由 daemon 管理：
+
+**端口 9000 — API + WebSocket 代理**（`web/server.py`）
+- HTTP 端点: `/api/peers`, `/api/refresh-peers`
+- WebSocket 代理: 浏览器 ↔ peer shell 服务（通过 localhost 映射端口）
+- 在 `/` 提供旧版 v1 HTML dashboard
+- 随 daemon 一起启动
+
+**端口 9001 — Dashboard v2 UI**（`dashboard_v2/server.py`）
+- daemon 以子进程方式启动的静态文件服务
+- 前端直接连接 peer 的 `/raw` WebSocket 端点进行终端会话
+- 通过 `/api/peers` 与端口 9000 通信获取节点列表
+- 使用 `--no-dashboard` 参数可跳过启动
+- 可独立运行: `shell-dashboard` 或 `python -m shell_cluster.dashboard_v2`
+
+**连接流程:**
+- 浏览器 → Dashboard v2 (:9001) → 从 API (:9000) 获取节点列表 → 直连 peer WS
 - 浏览器刷新后通过 `shell.attach` 恢复会话 + 滚动缓冲区回放
 - 前端直接并发查询每个 peer 的 `/sessions` HTTP 端点（3 秒超时）
 - **Discover** 按钮触发即时 tunnel API 刷新（带确认对话框）
@@ -196,7 +221,9 @@ TOML 配置文件，平台特定路径：
 name = "my-macbook"        # 节点名称，显示在 peers 列表和 dashboard 中
 # 默认为本机 hostname
 label = "shellcluster"     # Tunnel 标签 —— 相同标签的节点互相发现
-dashboard_port = 9000      # Dashboard HTTP 服务端口
+dashboard_port = 9000      # API + WebSocket 代理端口
+dashboard_v2_port = 9001   # Dashboard v2 UI 端口
+dashboard = true           # daemon 启动时是否启动 Dashboard v2
 
 [tunnel]
 backend = "devtunnel"      # Tunnel 后端（目前仅 "devtunnel"）
@@ -226,21 +253,23 @@ command = ""               # 默认 shell，留空 = 自动检测
 3. 删除本地配置文件
 
 ### `shellcluster start`
-1. 检查 `devtunnel` 是否安装和登录（仅 tunnel 模式）
-2. 如果没有配置文件，自动注册（提示输入节点名）
-3. 加载配置
-4. 创建 `ShellManager`（使用默认 shell）
-5. 创建 `ShellServer`（端口 0 = 系统随机分配）
-6. 启动 WebSocket 服务 → 获取实际端口
-7. `ensure_tunnel()` — 检查 tunnel 是否存在，不存在则创建，端口变了则更新
-8. `devtunnel host` — 启动 tunnel host 子进程
-9. 启动 `PeerDiscovery` 循环（5 分钟间隔）
-10. 启动健康检查循环（10 秒 HTTP ping）
-11. 启动 dashboard 服务 (:9000)
-12. 永久等待（直到 Ctrl+C 或 host 进程退出）
+1. 快速失败: 检查端口 9000 和 9001 是否可用
+2. 检查 `devtunnel` 是否安装和登录（仅 tunnel 模式）
+3. 如果没有配置文件，自动注册（提示输入节点名）
+4. 加载配置
+5. 创建 `ShellManager`（使用默认 shell）
+6. 创建 `ShellServer`（端口 0 = 系统随机分配）
+7. 启动 WebSocket 服务 → 获取实际端口
+8. `ensure_tunnel()` — 检查 tunnel 是否存在，不存在则创建，端口变了则更新
+9. `devtunnel host` — 启动 tunnel host 子进程
+10. 启动 `PeerDiscovery` 循环（5 分钟间隔）
+11. 启动健康检查循环（10 秒 HTTP ping）
+12. 启动 Dashboard API + WS 代理服务 (:9000)
+13. 启动 Dashboard v2 UI 服务 (:9001) 作为子进程（除非 `--no-dashboard`）
+14. 永久等待（直到 Ctrl+C 或 host 进程退出）
 
 ### `shellcluster start --no-tunnel`
-同上但跳过步骤 1、7-10。服务绑定指定的固定端口而非随机端口。
+同上但跳过步骤 2、8-11。服务绑定指定的固定端口而非随机端口。
 
 ### `shellcluster peers`
 1. 创建 `PeerDiscovery`（devtunnel 后端）
@@ -249,14 +278,10 @@ command = ""               # 默认 shell，留空 = 自动检测
 4. 用 Rich 表格打印（名称、tunnel ID、状态、URI）
 
 ### `shellcluster dashboard`
-1. 加载配置中的手动 peers（`[[peers]]`）
-2. 创建 `PeerDiscovery`，调用 `refresh()` 发现节点
-3. 对每个发现的节点: `devtunnel connect <tunnel-id>` → 映射到 localhost
-4. 合并手动 peers + 发现的节点（按名称去重）
-5. 启动 HTTP 服务 (:9000)，注入 peer 列表到 `index.html`
-6. 启动 WebSocket 代理（浏览器 → localhost 映射端口 → tunnel → peer）
-7. 打开浏览器
-8. 退出时：杀掉所有 `devtunnel connect` 进程
+1. 加载配置获取 dashboard 端口
+2. 打开浏览器到 `http://127.0.0.1:<dashboard_port>`
+
+注意: Dashboard 由运行中的 daemon 提供服务。请确保 `shellcluster start` 已在运行。
 
 ## 连接流程
 

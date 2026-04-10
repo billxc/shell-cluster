@@ -125,8 +125,8 @@ daemon 在后台运行，登录后自动启动。
 |------|------|
 | `shellcluster start` | 启动 daemon（tunnel + shell server + discovery + dashboard） |
 | `shellcluster start --no-tunnel --port 8765` | 本地模式启动（不使用 tunnel） |
-| `shellcluster start --show-self` | 在 dashboard 中显示本机会话 |
 | `shellcluster start --no-open` | 启动时不自动打开浏览器 |
+| `shellcluster start --no-dashboard` | 不启动 Dashboard v2 UI 服务 |
 | `shellcluster register` | 注册当前机器到 cluster |
 | `shellcluster unregister` | 从 cluster 移除当前机器 |
 | `shellcluster peers` | 列出已发现的节点 |
@@ -148,7 +148,8 @@ daemon 在后台运行，登录后自动启动。
 [node]
 name = "my-macbook"        # 节点名称，显示在 peers 和 dashboard 中
 label = "shellcluster"     # Tunnel 标签 —— 相同标签 = 同一个 cluster
-dashboard_port = 9000      # Dashboard HTTP 服务端口
+dashboard_port = 9000      # API + WebSocket 代理端口
+dashboard_v2_port = 9001   # Dashboard v2 UI 端口
 
 [tunnel]
 backend = "devtunnel"      # Tunnel 后端

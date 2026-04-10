@@ -137,8 +137,8 @@ The daemon runs in the background and auto-starts on login.
 |---------|-------------|
 | `shellcluster start` | Start daemon (tunnel + shell server + discovery + dashboard) |
 | `shellcluster start --no-tunnel --port 8765` | Start in local mode (no tunnel) |
-| `shellcluster start --show-self` | Include this node's sessions in the dashboard |
 | `shellcluster start --no-open` | Don't auto-open browser on start |
+| `shellcluster start --no-dashboard` | Don't start the dashboard v2 UI server |
 | `shellcluster register` | Register this machine to the cluster |
 | `shellcluster unregister` | Remove this machine from the cluster |
 | `shellcluster peers` | List discovered peers |
@@ -160,7 +160,8 @@ The daemon runs in the background and auto-starts on login.
 [node]
 name = "my-macbook"        # Node name, shown in peers and dashboard
 label = "shellcluster"     # Tunnel label — same label = same cluster
-dashboard_port = 9000      # Dashboard HTTP server port
+dashboard_port = 9000      # API + WebSocket proxy port
+dashboard_v2_port = 9001   # Dashboard v2 UI port
 
 [tunnel]
 backend = "devtunnel"      # Tunnel backend

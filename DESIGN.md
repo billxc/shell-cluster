@@ -59,11 +59,17 @@ src/shell_cluster/
 │   ├── base.py          # Abstract backend + naming utilities
 │   ├── devtunnel.py     # MS Dev Tunnel implementation
 │   └── discovery.py     # Peer discovery via tunnel API
-└── web/                 # ── Web dashboard ──
+├── web/                 # ── Web dashboard (API + WS proxy, port 9000) ──
+│   ├── __init__.py
+│   ├── server.py         # HTTP + WebSocket proxy server
+│   └── static/
+│       └── index.html    # xterm.js single-page dashboard (v1)
+└── dashboard_v2/        # ── Dashboard v2 (static UI, port 9001) ──
     ├── __init__.py
-    ├── server.py         # HTTP + WebSocket proxy server
+    ├── __main__.py       # Module entry point
+    ├── server.py         # Static file HTTP server (subprocess)
     └── static/
-        └── index.html    # xterm.js single-page dashboard
+        └── ...           # New dashboard UI assets
 ```
 
 ### Layer separation
@@ -72,7 +78,8 @@ src/shell_cluster/
 |-------|---------|-------------|
 | **Shell** | `shell/manager.py`, `shell/server.py` | PTY, WebSocket, protocol |
 | **Tunnel** | `tunnel/base.py`, `tunnel/devtunnel.py`, `tunnel/discovery.py` | Tunnel lifecycle, peer discovery |
-| **Web** | `web/server.py`, `web/static/` | HTTP, WebSocket proxy |
+| **Web** | `web/server.py`, `web/static/` | HTTP API, WebSocket proxy (port 9000) |
+| **Dashboard v2** | `dashboard_v2/server.py`, `dashboard_v2/static/` | Static UI server (port 9001, subprocess) |
 | **Orchestration** | `daemon.py`, `cli.py` | Both layers (composition root) |
 | **Shared** | `models.py`, `protocol.py`, `config.py` | Data structures only |
 
@@ -149,30 +156,48 @@ Abstract `TunnelBackend` protocol with concrete `DevTunnelBackend`:
 Orchestrates all components:
 ```
 start:
-  1. Check devtunnel is installed and logged in (tunnel mode)
-  2. Auto-register if no config exists (prompt for node name)
-  3. Bind WebSocket server (random port in tunnel mode, fixed in local mode)
-  4. ensure_tunnel() + host() (tunnel mode only)
-  5. Start discovery loop (5-minute interval, tunnel mode only)
-  6. Start health check loop (10-second HTTP ping to each peer's /sessions)
-  7. Start dashboard server (:9000)
-  8. Register atexit handler to kill child processes
+  1. Fail fast: check dashboard ports (9000, 9001) are available
+  2. Check devtunnel is installed and logged in (tunnel mode)
+  3. Auto-register if no config exists (prompt for node name)
+  4. Bind WebSocket server (random port in tunnel mode, fixed in local mode)
+  5. ensure_tunnel() + host() (tunnel mode only)
+  6. Start discovery loop (5-minute interval, tunnel mode only)
+  7. Start health check loop (10-second HTTP ping to each peer's /sessions)
+  8. Start dashboard API + WS proxy server (:9000)
+  9. Spawn dashboard v2 UI server (:9001) as subprocess (unless --no-dashboard)
+  10. Register atexit handler to kill child processes
 
 stop:
   1. Stop discovery + health check
-  2. Stop dashboard server
-  3. Stop WebSocket server
-  4. Kill devtunnel connect processes (peer connections)
-  5. Kill devtunnel host process
-  6. Keep tunnel alive for fast restart
+  2. Kill dashboard v2 subprocess
+  3. Stop dashboard API server
+  4. Stop WebSocket server
+  5. Kill devtunnel connect processes (peer connections)
+  6. Kill devtunnel host process
+  7. Keep tunnel alive for fast restart
 ```
 
 **Health check loop**: Every 10 seconds, HTTP GET to each connected peer's `/sessions` endpoint. When a peer becomes unreachable, kills its `devtunnel connect` process so the next discovery refresh will re-establish the connection.
 
-### 7. Web Dashboard (`web/server.py`, `web/static/index.html`)
-- Python: HTTP server (serves HTML) + WebSocket proxy + REST API (`/api/peers`, `/api/refresh-peers`)
-- HTML: Single page with xterm.js, Catppuccin theme
-- Connection: browser → WS proxy (:9000) → init message → proxy connects to peer → bidirectional relay
+### 7. Web Dashboard
+
+The dashboard consists of two servers, both managed by the daemon:
+
+**Port 9000 — API + WebSocket proxy** (`web/server.py`)
+- HTTP endpoints: `/api/peers`, `/api/refresh-peers`
+- WebSocket proxy: browser ↔ peer shell server (via localhost mapped ports)
+- Serves the legacy v1 HTML dashboard at `/`
+- Always starts with the daemon
+
+**Port 9001 — Dashboard v2 UI** (`dashboard_v2/server.py`)
+- Static file server spawned as a subprocess by the daemon
+- The frontend connects directly to peers' `/raw` WebSocket endpoint for terminal sessions
+- Talks to port 9000 for peer list via `/api/peers`
+- Skipped with `--no-dashboard` flag
+- Can be run standalone: `shell-dashboard` or `python -m shell_cluster.dashboard_v2`
+
+**Connection flow:**
+- Browser → Dashboard v2 (:9001) → fetches peers from API (:9000) → connects directly to peer WS
 - Sessions persist across browser refresh via `shell.attach` with scrollback replay
 - Frontend queries each peer's `/sessions` HTTP endpoint directly (parallel, with 3s timeout)
 - **Discover** button triggers immediate tunnel API refresh (with confirmation dialog)
@@ -195,7 +220,9 @@ Sections: `[node]`, `[tunnel]`, `[shell]`, `[[peers]]`
 [node]
 name = "my-macbook"        # Node name, shown in peers list and dashboard
 label = "shellcluster"     # Tunnel label — same label = same cluster
-dashboard_port = 9000      # Dashboard HTTP server port
+dashboard_port = 9000      # API + WebSocket proxy port
+dashboard_v2_port = 9001   # Dashboard v2 UI port
+dashboard = true           # Start dashboard v2 on daemon startup
 
 [tunnel]
 backend = "devtunnel"      # Tunnel backend ("devtunnel" for now)
@@ -225,21 +252,23 @@ command = ""               # Default shell. Empty = auto-detect
 3. Delete local config file
 
 ### `shellcluster start`
-1. Check `devtunnel` is installed and logged in (tunnel mode only)
-2. Auto-register if no config exists (prompt for node name)
-3. Load config
-4. Create `ShellManager` with default shell
-5. Create `ShellServer` (port 0 = random)
-6. Start WebSocket server → get actual port
-7. `ensure_tunnel()` — check if tunnel exists, create if not, update port if changed
-8. `devtunnel host` — start tunnel host subprocess
-9. Start `PeerDiscovery` loop (5-minute interval)
-10. Start health check loop (10-second HTTP ping to peers)
-11. Start dashboard server (:9000)
-12. Wait forever (until Ctrl+C or host process exit)
+1. Fail fast: check ports 9000 and 9001 are available
+2. Check `devtunnel` is installed and logged in (tunnel mode only)
+3. Auto-register if no config exists (prompt for node name)
+4. Load config
+5. Create `ShellManager` with default shell
+6. Create `ShellServer` (port 0 = random)
+7. Start WebSocket server → get actual port
+8. `ensure_tunnel()` — check if tunnel exists, create if not, update port if changed
+9. `devtunnel host` — start tunnel host subprocess
+10. Start `PeerDiscovery` loop (5-minute interval)
+11. Start health check loop (10-second HTTP ping to peers)
+12. Start dashboard API + WS proxy server (:9000)
+13. Spawn dashboard v2 UI server (:9001) as subprocess (unless `--no-dashboard`)
+14. Wait forever (until Ctrl+C or host process exit)
 
 ### `shellcluster start --no-tunnel`
-Same as above but skip steps 1, 7-10. Server binds to specified port instead of random.
+Same as above but skip steps 2, 8-11. Server binds to specified port instead of random.
 
 ### `shellcluster peers`
 1. Create `PeerDiscovery` with devtunnel backend
@@ -248,14 +277,10 @@ Same as above but skip steps 1, 7-10. Server binds to specified port instead of 
 4. Print Rich table (name, tunnel ID, status, URI)
 
 ### `shellcluster dashboard`
-1. Load config peers (manual `[[peers]]`)
-2. Create `PeerDiscovery`, call `refresh()`
-3. For each discovered peer: `devtunnel connect <tunnel-id>` → map to localhost
-4. Merge manual peers + discovered peers (dedup by name)
-5. Start HTTP server (:9000) serving `index.html` with peer list injected
-6. Start WebSocket proxy (browser → localhost mapped port → tunnel → peer)
-7. Open browser
-8. On exit: kill all `devtunnel connect` processes
+1. Load config to get dashboard port
+2. Open browser to `http://127.0.0.1:<dashboard_port>`
+
+Note: The dashboard is served by the running daemon. Make sure `shellcluster start` is running first.
 
 ## Connection Flow
 

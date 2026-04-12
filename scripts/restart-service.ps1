@@ -1,0 +1,1 @@
+easy-service restart shellcluster

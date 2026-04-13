@@ -33,6 +33,18 @@ macOS (zsh)                Windows (PowerShell)         Linux (bash)
 
 需要 Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)。
 
+### 免安装直接运行
+
+```bash
+# 直接运行（无需安装）
+uvx --from git+https://github.com/billxc/shell-cluster shellcluster start
+
+# 始终拉取最新版本（跳过缓存）
+uvx --refresh --from git+https://github.com/billxc/shell-cluster shellcluster start
+```
+
+### 全局安装
+
 ```bash
 uv tool install git+https://github.com/billxc/shell-cluster
 ```

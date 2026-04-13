@@ -39,6 +39,9 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 # Run directly (no install needed)
 uvx --from git+https://github.com/billxc/shell-cluster shellcluster start
 
+# Always fetch the latest version (skip cache)
+uvx --refresh --from git+https://github.com/billxc/shell-cluster shellcluster start
+
 # Or with uv run
 uv run --with git+https://github.com/billxc/shell-cluster shellcluster dashboard
 ```

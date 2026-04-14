@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Simple xterm Test</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; padding: 20px; font-family: sans-serif; color: #cdd6f4; }
+h1 { font-size: 16px; margin-bottom: 12px; }
+#terminal { width: 800px; height: 400px; }
+#log { margin-top: 12px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; background: #0f0f1a; padding: 8px; border-radius: 4px; }
+.log-line { margin: 2px 0; color: #a6e3a1; }
+.log-line.comp { color: #89b4fa; }
+.log-line.key { color: #6c7086; }
+.log-line.input { color: #f9e2af; }
+</style>
+</head>
+<body>
+<h1>Simple xterm (local echo, no server)</h1>
+<div id="terminal"></div>
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
+<script>
+const term = new Terminal({
+  cursorBlink: true,
+  fontSize: 14,
+  fontFamily: "'JetBrains Mono', Menlo, monospace",
+  theme: { background: '#1a1a2e', foreground: '#cdd6f4', cursor: '#f5e0dc' },
+});
+
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById('terminal'));
+fitAddon.fit();
+window.addEventListener('resize', () => fitAddon.fit());
+
+term.writeln('Welcome! Type anything to test input.');
+term.writeln('');
+term.write('$ ');
+
+const logEl = document.getElementById('log');
+let line = '';
+
+function addLog(text, cls) {
+  const div = document.createElement('div');
+  div.className = 'log-line' + (cls ? ' ' + cls : '');
+  div.textContent = text;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function toHex(str) {
+  return Array.from(str).map(ch => {
+    const cp = ch.codePointAt(0);
+    if (cp === 0x0d) return '\\r';
+    if (cp === 0x0a) return '\\n';
+    if (cp === 0x7f) return '\\x7f';
+    if (cp < 0x20) return '\\x' + cp.toString(16).padStart(2, '0');
+    return cp > 0x7f ? 'U+' + cp.toString(16).toUpperCase().padStart(4, '0') : ch;
+  }).join('');
+}
+
+// Fix Safari + macOS CJK IME issues:
+// 1. CapsLock ending composition emits duplicate onData (dedup)
+// 2. CapsLock confirmation includes pinyin separator spaces (strip them)
+let _composing = false;
+let _compOnData = '';
+let _rawKeys = [];
+const textarea = term.textarea;
+
+textarea.addEventListener('compositionstart', () => {
+  _composing = true;
+  _compOnData = '';
+  _rawKeys = [];
+}, true);
+textarea.addEventListener('compositionend', () => {
+  setTimeout(() => { _composing = false; _compOnData = ''; _rawKeys = []; }, 50);
+}, true);
+
+// Track raw keystrokes during composition
+textarea.addEventListener('keydown', (e) => {
+  if (e.isComposing && e.keyCode === 229 && e.key.length === 1) {
+    _rawKeys.push(e.key);
+  }
+}, true);
+
+term.onData(data => {
+  if (_composing) {
+    if (_compOnData === data) {
+      addLog('[onData DEDUP] "' + toHex(data) + '" (skipped)', 'key');
+      return;
+    }
+    _compOnData = data;
+
+    // Safari CapsLock: compositionend includes pinyin separator spaces.
+    // If data without spaces matches the raw keystrokes, use raw instead.
+    const raw = _rawKeys.join('');
+    if (raw && data.replace(/ /g, '') === raw) {
+      addLog('[onData] "' + toHex(data) + '" → fixed to "' + raw + '"');
+      data = raw;
+    } else {
+      addLog('[onData] "' + toHex(data) + '"');
+    }
+  } else {
+    addLog('[onData] "' + toHex(data) + '"');
+  }
+
+  if (data === '\r') {
+    term.writeln('');
+    addLog('[line] "' + line + '"');
+    line = '';
+    term.write('$ ');
+  } else if (data === '\x7f') {
+    if (line.length > 0) {
+      // handle wide chars (CJK = 2 cols)
+      const last = line[line.length - 1];
+      const width = last.codePointAt(0) > 0x7f ? 2 : 1;
+      line = line.slice(0, -1);
+      term.write('\b \b'.repeat(width));
+    }
+  } else {
+    line += data;
+    term.write(data);
+  }
+});
+
+// Log composition & input events on xterm's textarea
+if (textarea) {
+  textarea.addEventListener('compositionstart', e => {
+    addLog('[compositionstart] data="' + (e.data || '') + '"', 'comp');
+  }, true);
+  textarea.addEventListener('compositionupdate', e => {
+    addLog('[compositionupdate] data="' + (e.data || '') + '"', 'comp');
+  }, true);
+  textarea.addEventListener('compositionend', e => {
+    addLog('[compositionend] data="' + (e.data || '') + '"', 'comp');
+  }, true);
+  textarea.addEventListener('input', e => {
+    addLog('[input] inputType=' + e.inputType + ' data="' + (e.data || '') + '" isComposing=' + e.isComposing + ' textarea.value="' + textarea.value + '"', 'input');
+  }, true);
+  textarea.addEventListener('keydown', e => {
+    if (e.keyCode === 229 || e.isComposing || e.key === 'CapsLock') {
+      addLog('[keydown] key=' + e.key + ' code=' + e.code + ' keyCode=' + e.keyCode + ' isComposing=' + e.isComposing, 'key');
+    }
+  }, true);
+  textarea.addEventListener('keyup', e => {
+    if (e.key === 'CapsLock') {
+      addLog('[keyup] key=' + e.key + ' code=' + e.code + ' keyCode=' + e.keyCode + ' isComposing=' + e.isComposing, 'key');
+    }
+  }, true);
+}
+
+term.focus();
+</script>
+</body>
+</html>

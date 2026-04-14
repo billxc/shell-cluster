@@ -18,6 +18,12 @@ dependencies = [
 shellcluster = "shell_cluster.cli:main"
 shell-dashboard = "shell_cluster.dashboard_v2.server:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

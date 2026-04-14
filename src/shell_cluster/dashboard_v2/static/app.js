@@ -397,10 +397,44 @@ function createSession(peer, existingSessionId) {
           attached = true;
           term.clear();
           renderAll();
-          // Now load attach addon — it takes over binary I/O
-          const attachAddon = new AttachAddon.AttachAddon(ws, { bidirectional: true });
+          // AttachAddon: server→terminal only (bidirectional off).
+          // We send data manually to fix Safari IME bugs.
+          const attachAddon = new AttachAddon.AttachAddon(ws, { bidirectional: false });
           term.loadAddon(attachAddon);
           sessionState._attachAddon = attachAddon;
+
+          // Manual send with Safari IME fix
+          const encoder = new TextEncoder();
+          let _composing = false;
+          let _compOnData = '';
+          let _rawKeys = [];
+          const ta = term.textarea;
+
+          if (ta) {
+            ta.addEventListener('compositionstart', () => {
+              _composing = true; _compOnData = ''; _rawKeys = [];
+            }, true);
+            ta.addEventListener('compositionend', () => {
+              setTimeout(() => { _composing = false; _compOnData = ''; _rawKeys = []; }, 50);
+            }, true);
+            ta.addEventListener('keydown', (e) => {
+              if (e.isComposing && e.keyCode === 229 && e.key.length === 1) {
+                _rawKeys.push(e.key);
+              }
+            }, true);
+          }
+
+          term.onData(data => {
+            if (_composing) {
+              if (_compOnData === data) return;
+              _compOnData = data;
+              const raw = _rawKeys.join('');
+              if (raw && data.replace(/ /g, '') === raw) data = raw;
+            }
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(encoder.encode(data));
+            }
+          });
           return;
         }
         if (msg.type === 'shell.closed') {
@@ -464,7 +498,8 @@ function closeSession(tabId) {
         session_id: s.sessionId,
       }));
     } catch (e) {}
-    s.ws.close();
+    // Delay close so the shell.close message has time to flush
+    setTimeout(() => { try { s.ws.close(); } catch(e) {} }, 200);
   }
 
   s.term.dispose();

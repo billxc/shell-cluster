@@ -194,6 +194,10 @@ class ShellServer:
                             )
                         elif ctrl.get("type") == "shell.close":
                             await self._shell_manager.close(session_id)
+                            try:
+                                await ws.send(json.dumps({"type": "shell.closed", "session_id": session_id}))
+                            except websockets.ConnectionClosed:
+                                pass
                             break
                         else:
                             # Unknown JSON — treat as PTY input

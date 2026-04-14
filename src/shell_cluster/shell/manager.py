@@ -1,6 +1,6 @@
 """Manage multiple PTY shell sessions on the local machine.
 
-Cross-platform: uses pty/fork on Unix, winpty on Windows.
+Cross-platform: uses ptyprocess on Unix, winpty on Windows.
 """
 
 from __future__ import annotations
@@ -80,56 +80,24 @@ class ShellManager:
     async def _create_unix(
         self, session_id: str, shell_cmd: str, cols: int, rows: int,
     ) -> ShellSession:
-        import fcntl
-        import pty
-        import struct
-        import termios
-
-        master_fd, slave_fd = pty.openpty()
-
-        # Set terminal size
-        winsize = struct.pack("HHHH", rows, cols, 0, 0)
-        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+        from ptyprocess import PtyProcess
 
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
         env.setdefault("LANG", "en_US.UTF-8")
         env.setdefault("LC_CTYPE", "en_US.UTF-8")
 
-        pid = os.fork()
-        if pid == 0:
-            # Child process
-            os.close(master_fd)
-            os.setsid()
-            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-            os.dup2(slave_fd, 0)
-            os.dup2(slave_fd, 1)
-            os.dup2(slave_fd, 2)
-            if slave_fd > 2:
-                os.close(slave_fd)
-            # Close all inherited FDs (server sockets, other PTY masters, pipes)
-            # to prevent the child from holding them open after exec.
-            # os.sysconf("SC_OPEN_MAX") can overflow on Python 3.14/macOS,
-            # so cap it to a reasonable value.
-            try:
-                max_fd = os.sysconf("SC_OPEN_MAX")
-            except (ValueError, OSError):
-                max_fd = 1024
-            if max_fd > 65536:
-                max_fd = 65536
-            os.closerange(3, max_fd)
-            os.execvpe(shell_cmd, [shell_cmd], env)
-            os._exit(1)
-
-        # Parent
-        os.close(slave_fd)
-        # Keep master_fd BLOCKING - read loop runs in thread executor
+        proc = PtyProcess.spawn(
+            [shell_cmd],
+            dimensions=(rows, cols),
+            env=env,
+        )
 
         return ShellSession(
             session_id=session_id,
             shell=os.path.basename(shell_cmd),
-            pid=pid,
-            _handle=master_fd,
+            pid=proc.pid,
+            _handle=proc,
         )
 
     # ── Windows implementation ───────────────────────────────────────
@@ -166,6 +134,8 @@ class ShellManager:
                 data = await loop.run_in_executor(
                     None, self._blocking_read, session
                 )
+                if data is None:
+                    continue  # select() timeout, keep polling
                 if not data:
                     break
                 session.append_output(data)
@@ -173,23 +143,34 @@ class ShellManager:
         except (OSError, IOError):
             pass
         finally:
-            # Reap child process to avoid zombies
-            self._reap_child(session)
+            # ptyprocess handles child reaping via close()
             if on_exit:
                 await on_exit(session.session_id)
 
     @staticmethod
-    def _blocking_read(session: ShellSession) -> bytes:
-        """Blocking read from PTY (cross-platform)."""
+    def _blocking_read(session: ShellSession) -> bytes | None:
+        """Blocking read from PTY (cross-platform).
+
+        Returns bytes on data, b"" on EOF/error, None on timeout.
+        Uses select() with timeout on Unix so the thread can exit
+        promptly when the fd is closed (macOS does not unblock
+        os.read() when another thread closes the same fd).
+        """
         try:
             if IS_WINDOWS:
                 # winpty PtyProcess
                 proc = session._handle
                 return proc.read(4096).encode("utf-8", errors="replace")
             else:
-                # Unix fd
-                return os.read(session._handle, 4096)
-        except (OSError, EOFError):
+                import select
+                fd = session._handle.fd
+                if fd < 0:
+                    return b""
+                ready, _, _ = select.select([fd], [], [], 0.5)
+                if not ready:
+                    return None  # timeout, not EOF
+                return os.read(fd, 4096)
+        except (OSError, EOFError, ValueError):
             return b""
 
     # ── Write (cross-platform) ──────────────────────────────────────
@@ -203,7 +184,7 @@ class ShellManager:
             if IS_WINDOWS:
                 session._handle.write(data.decode("utf-8", errors="replace"))
             else:
-                os.write(session._handle, data)
+                session._handle.write(data)
         except OSError as e:
             log.warning("Failed to write to session %s: %s (handle=%r, pid=%d)",
                         session_id, e, session._handle, session.pid)
@@ -263,34 +244,19 @@ class ShellManager:
         if not session:
             return
         try:
-            if IS_WINDOWS:
-                session._handle.setwinsize(rows, cols)
-            else:
-                import fcntl
-                import signal
-                import struct
-                import termios
-
-                winsize = struct.pack("HHHH", rows, cols, 0, 0)
-                fcntl.ioctl(session._handle, termios.TIOCSWINSZ, winsize)
-                os.killpg(os.getpgid(session.pid), signal.SIGWINCH)
+            session._handle.setwinsize(rows, cols)
         except OSError:
             log.warning("Failed to resize session %s", session_id)
 
     # ── Close (cross-platform) ──────────────────────────────────────
 
-    def _reap_child(self, session: ShellSession) -> None:
-        """Reap child process to prevent zombies (Unix only)."""
-        if IS_WINDOWS or session.pid <= 0:
-            return
+    @staticmethod
+    def _close_pty(session: ShellSession) -> None:
+        """Close PTY handle via the library's own lifecycle (blocking)."""
+        proc = session._handle
         try:
-            pid, _ = os.waitpid(session.pid, os.WNOHANG)
-            if pid == 0:
-                # Child hasn't exited yet, try once more after a short wait
-                import time
-                time.sleep(0.1)
-                os.waitpid(session.pid, os.WNOHANG)
-        except ChildProcessError:
+            proc.close(force=True)
+        except Exception:
             pass
 
     async def close(self, session_id: str) -> bool:
@@ -310,18 +276,8 @@ class ShellManager:
                 if proc.isalive():
                     proc.terminate(force=True)
             else:
-                try:
-                    os.close(session._handle)
-                except OSError:
-                    pass
-                import signal
-                try:
-                    os.kill(session.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                # Wait briefly in executor so child has time to exit
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._reap_child, session)
+                await loop.run_in_executor(None, self._close_pty, session)
         except OSError:
             pass
 

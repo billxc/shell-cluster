@@ -38,7 +38,7 @@ class ShellSession:
     shell: str = ""  # e.g. "zsh", "bash", "powershell"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     pid: int = 0
-    # Platform-specific handle: fd on Unix, winpty object on Windows
+    # Platform-specific handle: ptyprocess.PtyProcess on Unix, winpty object on Windows
     _handle: object = field(default=None, repr=False)
     # Ring buffer of recent output for replay on reconnect
     _scrollback: deque = field(default_factory=deque, repr=False)

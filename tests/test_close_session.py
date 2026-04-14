@@ -6,8 +6,6 @@ survive, and that disconnecting without shell.close preserves sessions.
 
 import asyncio
 import json
-import os
-import signal
 import uuid
 from urllib.request import urlopen
 
@@ -32,15 +30,11 @@ async def server():
     await srv.start()
     port = srv.port
     yield manager, port
-    # Close FDs to unblock reader threads, then kill children
+    # Close PTY sessions via ptyprocess lifecycle (closes fd + kills child)
     for session in list(manager.sessions.values()):
         try:
-            os.close(session._handle)
-        except OSError:
-            pass
-        try:
-            os.kill(session.pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
+            session._handle.close(force=True)
+        except Exception:
             pass
     # Wait for reader threads to notice closed FDs
     for task in list(manager._readers.values()):

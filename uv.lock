@@ -81,6 +81,15 @@ wheels = [
 ]
 
 [[package]]
+name = "ptyprocess"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/e5/16ff212c1e452235a90aeb09066144d0c5a6a8c0834397e03f5224495c4e/ptyprocess-0.7.0.tar.gz", hash = "sha256:5c5d0a3b48ceee0b48485e0c26037c0acd7d29765ca3fbb5cb3831d347423220", size = 70762, upload-time = "2020-12-28T15:15:30.155Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/22/a6/858897256d0deac81a172289110f31629fc4cee19b6f01283303e18c8db3/ptyprocess-0.7.0-py2.py3-none-any.whl", hash = "sha256:4b41f3967fce3af57cc7e94b888626c18bf37a083e3651ca8feeb66d492fef35", size = 13993, upload-time = "2020-12-28T15:15:28.35Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -158,6 +167,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "platformdirs" },
+    { name = "ptyprocess", marker = "sys_platform != 'win32'" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "rich" },
     { name = "tomli-w" },
@@ -174,6 +184,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "platformdirs", specifier = ">=4.0" },
+    { name = "ptyprocess", marker = "sys_platform != 'win32'", specifier = ">=0.7" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=2.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "tomli-w", specifier = ">=1.0" },

@@ -434,16 +434,11 @@ class Daemon:
             except ProcessLookupError:
                 pass
 
-        # Close PTY FDs first to unblock reader threads stuck in os.read(),
-        # then SIGKILL the shell child processes
+        # Close PTY sessions via ptyprocess lifecycle (closes fd + kills child)
         for session in self._shell_manager.sessions.values():
             try:
-                os.close(session._handle)
-            except OSError:
-                pass
-            try:
-                os.kill(session.pid, 9)  # SIGKILL
-            except (ProcessLookupError, OSError):
+                session._handle.close(force=True)
+            except Exception:
                 pass
 
         # Stop servers with short timeouts

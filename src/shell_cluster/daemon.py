@@ -51,10 +51,11 @@ class Daemon:
         self._tunnel_backend = None
         self._shell_manager = ShellManager(config.get_shell_command())
         if not self._no_tunnel:
+            tunnel_port = config.tunnel.port if config.tunnel.port > 0 else 0
             self._server = ShellServer(
                 self._shell_manager,
                 config.node.name,
-                port=0,
+                port=tunnel_port,
             )
         else:
             self._server = ShellServer(
@@ -82,7 +83,10 @@ class Daemon:
     def _get_tunnel_backend(self):
         if self._tunnel_backend is None:
             from shell_cluster.tunnel.base import get_tunnel_backend
-            self._tunnel_backend = get_tunnel_backend(self._config.tunnel.backend)
+            self._tunnel_backend = get_tunnel_backend(
+                self._config.tunnel.backend,
+                port=self._config.tunnel.port,
+            )
         return self._tunnel_backend
 
     def _get_peers_for_dashboard(self) -> list[dict]:
@@ -193,7 +197,7 @@ class Daemon:
 
             log.info("Starting tunnel host...")
             self._host_process = await backend.host(self._tunnel_id, actual_port)
-            if self._host_process.pid:
+            if self._host_process and self._host_process.pid:
                 _child_pids.add(self._host_process.pid)
 
             # Start discovery — first refresh happens inside run_loop

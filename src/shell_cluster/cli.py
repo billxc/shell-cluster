@@ -122,6 +122,40 @@ def _check_devtunnel() -> bool:
     return True
 
 
+def _check_tailscale() -> bool:
+    """Check that tailscale CLI is installed and connected. Returns True if ok."""
+    import json
+    import shutil
+    import subprocess
+
+    if not shutil.which("tailscale"):
+        console.print("[red]tailscale CLI is not installed.[/red]")
+        console.print("Install it: [bold]brew install tailscale[/bold]")
+        return False
+
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True, timeout=10,
+        )
+        if result.returncode != 0:
+            console.print("[red]tailscale is not running.[/red]")
+            console.print("Start it: [bold]tailscaled --tun=userspace-networking[/bold]")
+            return False
+        status = json.loads(result.stdout)
+        state = status.get("BackendState", "")
+        if state != "Running":
+            console.print(f"[red]tailscale is not connected (state: {state}).[/red]")
+            console.print("Run: [bold]tailscale up[/bold]")
+            return False
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]tailscale status check timed out, proceeding anyway.[/yellow]")
+    except Exception:
+        pass
+
+    return True
+
+
 def _ensure_registered() -> Config:
     """Ensure device is registered. Prompt for node name if not."""
     from shell_cluster.config import CONFIG_FILE
@@ -156,9 +190,14 @@ def start(no_tunnel: bool, name: str | None, port: int | None, no_open: bool, no
         console.print("Example: shellcluster start --no-tunnel --port 8765")
         return
 
-    # Check devtunnel availability (unless local mode)
-    if not no_tunnel and not _check_devtunnel():
-        return
+    # Check tunnel backend availability (unless local mode)
+    if not no_tunnel:
+        config_check = _ensure_registered()
+        if config_check.tunnel.backend == "tailscale":
+            if not _check_tailscale():
+                return
+        elif not _check_devtunnel():
+            return
 
     # Auto-register if needed
     config = _ensure_registered()

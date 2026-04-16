@@ -36,6 +36,10 @@ def get_tunnel_backend(backend_name: str = "devtunnel", **kwargs) -> TunnelBacke
     if backend_name == "devtunnel":
         from shell_cluster.tunnel.devtunnel import DevTunnelBackend
         return DevTunnelBackend()
+    if backend_name == "tailscale":
+        from shell_cluster.tunnel.tailscale import TailscaleBackend
+        port = kwargs.get("port", 9876)
+        return TailscaleBackend(port=port)
     raise ValueError(f"Unknown tunnel backend: {backend_name}")
 
 
@@ -53,7 +57,7 @@ class TunnelBackend(Protocol):
         """Create a new tunnel with a port forwarding."""
         ...
 
-    async def host(self, tunnel_id: str, port: int) -> asyncio.subprocess.Process:
+    async def host(self, tunnel_id: str, port: int) -> asyncio.subprocess.Process | None:
         """Start hosting the tunnel. Returns the long-running process."""
         ...
 

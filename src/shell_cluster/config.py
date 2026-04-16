@@ -27,8 +27,9 @@ class NodeConfig:
 
 @dataclass
 class TunnelConfig:
-    backend: str = "devtunnel"  # Tunnel backend: "devtunnel"
+    backend: str = "devtunnel"  # Tunnel backend: "devtunnel" or "tailscale"
     expiration: str = ""  # Tunnel expiration (empty = devtunnel default 30d)
+    port: int = 0  # Fixed port for backends like tailscale (0 = random)
 
 
 @dataclass

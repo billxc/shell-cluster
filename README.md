@@ -84,14 +84,16 @@ easy-service install shellcluster -- shellcluster start --no-open
 
 ## Quick Start
 
-### 1. Install
+### Option A: Using Dev Tunnel (default)
+
+#### 1. Install
 
 ```bash
 uv tool install git+https://github.com/billxc/shell-cluster
 uv tool install git+https://github.com/billxc/easy-service.git
 ```
 
-### 2. Login to Dev Tunnel (once per machine)
+#### 2. Login to Dev Tunnel (once per machine)
 
 ```bash
 devtunnel user login
@@ -99,7 +101,7 @@ devtunnel user login
 
 Use the **same Microsoft account** on all machines.
 
-### 3. Start (each machine)
+#### 3. Start (each machine)
 
 ```bash
 shellcluster start
@@ -107,13 +109,61 @@ shellcluster start
 
 On first run, if no config exists, you'll be prompted for a node name (defaults to hostname). The daemon checks that `devtunnel` is installed and logged in before starting.
 
-### 4. Open Dashboard (any machine)
+#### 4. Open Dashboard (any machine)
 
 ```bash
 shellcluster dashboard
 ```
 
 Opens your browser — left sidebar shows all discovered peers, right side is a full xterm.js terminal. Click a peer to open a shell, manage multiple sessions in tabs. Use the **Discover** button to trigger an immediate peer refresh.
+
+### Option B: Using Tailscale
+
+Tailscale runs in userspace-networking mode — no sudo, no TUN device, no impact on your normal network.
+
+#### 1. Install
+
+```bash
+uv tool install git+https://github.com/billxc/shell-cluster
+brew install tailscale  # or see https://tailscale.com/download
+```
+
+#### 2. Start Tailscale (once per machine)
+
+```bash
+# Start the daemon (no sudo needed)
+tailscaled --tun=userspace-networking
+
+# Login (in another terminal)
+tailscale login
+```
+
+Use the **same Tailscale account** on all machines.
+
+#### 3. Configure shell-cluster to use Tailscale
+
+```bash
+shellcluster config tunnel.backend tailscale
+shellcluster config tunnel.port 9876
+```
+
+All machines in the same cluster should use the **same port**. If the port conflicts on a specific machine, encode a custom port in the Tailscale hostname:
+
+```bash
+tailscale set --hostname=my-mac-p9877  # this machine uses port 9877
+```
+
+#### 4. Start (each machine)
+
+```bash
+shellcluster start
+```
+
+#### 5. Open Dashboard (any machine)
+
+```bash
+shellcluster dashboard
+```
 
 ### Run as a background service (recommended)
 
@@ -167,8 +217,9 @@ dashboard_port = 9000      # API + WebSocket proxy port
 dashboard_v2_port = 9001   # Dashboard v2 UI port
 
 [tunnel]
-backend = "devtunnel"      # Tunnel backend
-expiration = "30d"          # Tunnel auto-expiration
+backend = "devtunnel"      # Tunnel backend: "devtunnel" or "tailscale"
+expiration = "30d"          # Tunnel auto-expiration (devtunnel only)
+port = 0                   # Fixed port for shell server (0 = random, set for tailscale)
 
 [shell]
 command = ""               # Default shell (empty = auto-detect)
@@ -229,6 +280,7 @@ manager.status("shellcluster")  # check status
 - [x] Windows support (winpty/conpty)
 - [x] Local mode (no tunnel)
 - [x] MS Dev Tunnel backend
+- [x] Tailscale backend (userspace networking)
 - [x] Web Dashboard (xterm.js)
 - [x] Session reconnect with scrollback replay
 - [x] Server-side health checks (HTTP ping every 10s)

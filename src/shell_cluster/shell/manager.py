@@ -91,6 +91,7 @@ class ShellManager:
             [shell_cmd],
             dimensions=(rows, cols),
             env=env,
+            cwd=os.path.expanduser("~"),
         )
 
         return ShellSession(
@@ -110,6 +111,7 @@ class ShellManager:
         proc = PtyProcess.spawn(
             shell_cmd,
             dimensions=(rows, cols),
+            cwd=os.path.expanduser("~"),
         )
 
         return ShellSession(

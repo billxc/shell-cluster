@@ -81,14 +81,16 @@ easy-service install shellcluster -- shellcluster start --no-open
 
 ## 快速开始
 
-### 1. 安装
+### 方式 A：使用 Dev Tunnel（默认）
+
+#### 1. 安装
 
 ```bash
 uv tool install git+https://github.com/billxc/shell-cluster
 uv tool install git+https://github.com/billxc/easy-service.git
 ```
 
-### 2. 登录 Dev Tunnel（每台机器一次）
+#### 2. 登录 Dev Tunnel（每台机器一次）
 
 ```bash
 devtunnel user login
@@ -96,7 +98,7 @@ devtunnel user login
 
 所有机器使用 **同一个微软账号**。
 
-### 3. 启动（每台机器）
+#### 3. 启动（每台机器）
 
 ```bash
 shellcluster start
@@ -104,13 +106,61 @@ shellcluster start
 
 首次启动时，如果没有配置文件，会提示输入节点名称（默认为主机名）。daemon 启动前会检查 `devtunnel` 是否安装和登录。
 
-### 4. 打开 Dashboard（任意机器）
+#### 4. 打开 Dashboard（任意机器）
 
 ```bash
 shellcluster dashboard
 ```
 
 自动打开浏览器 —— 左侧显示所有发现的节点，右侧是完整的 xterm.js 终端。点击节点即可打开 shell，支持多 tab 管理多个会话。使用 **Discover** 按钮可立即触发节点刷新。
+
+### 方式 B：使用 Tailscale
+
+Tailscale 使用 userspace-networking 模式 —— 无需 sudo，不创建 TUN 网卡，不影响正常网络。
+
+#### 1. 安装
+
+```bash
+uv tool install git+https://github.com/billxc/shell-cluster
+brew install tailscale  # 或参考 https://tailscale.com/download
+```
+
+#### 2. 启动 Tailscale（每台机器一次）
+
+```bash
+# 启动 daemon（不需要 sudo）
+tailscaled --tun=userspace-networking
+
+# 登录（在另一个终端）
+tailscale login
+```
+
+所有机器使用 **同一个 Tailscale 账号**。
+
+#### 3. 配置 shell-cluster 使用 Tailscale
+
+```bash
+shellcluster config tunnel.backend tailscale
+shellcluster config tunnel.port 9876
+```
+
+同一集群的所有机器需要使用 **相同端口**。如果某台机器端口冲突，可以在 Tailscale hostname 中编码自定义端口：
+
+```bash
+tailscale set --hostname=my-mac-p9877  # 这台机器使用端口 9877
+```
+
+#### 4. 启动（每台机器）
+
+```bash
+shellcluster start
+```
+
+#### 5. 打开 Dashboard（任意机器）
+
+```bash
+shellcluster dashboard
+```
 
 ### 安装为后台服务（推荐）
 
@@ -164,8 +214,9 @@ dashboard_port = 9000      # API + WebSocket 代理端口
 dashboard_v2_port = 9001   # Dashboard v2 UI 端口
 
 [tunnel]
-backend = "devtunnel"      # Tunnel 后端
-expiration = "30d"          # Tunnel 自动过期时间
+backend = "devtunnel"      # Tunnel 后端："devtunnel" 或 "tailscale"
+expiration = "30d"          # Tunnel 自动过期时间（仅 devtunnel）
+port = 0                   # Shell server 固定端口（0 = 随机，tailscale 需设置）
 
 [shell]
 command = ""               # 默认 shell（留空 = 自动检测）
@@ -226,6 +277,7 @@ manager.status("shellcluster")  # 查看状态
 - [x] Windows 支持（winpty/conpty）
 - [x] 本地模式（无 tunnel）
 - [x] MS Dev Tunnel 后端
+- [x] Tailscale 后端（userspace networking）
 - [x] Web Dashboard（xterm.js）
 - [x] 会话重连 + 滚动缓冲区回放
 - [x] 服务端健康检查（每 10 秒 HTTP ping）

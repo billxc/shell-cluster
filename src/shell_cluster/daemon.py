@@ -395,7 +395,11 @@ class Daemon:
     async def _safe_stop(self) -> None:
         """Wrapper around stop() that ensures _stop_event is always set."""
         try:
-            await self.stop()
+            await asyncio.wait_for(self.stop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            log.error("Graceful stop timed out after 5s, forcing exit")
+            _cleanup_children()
+            os._exit(1)
         except Exception as e:
             log.error("Error during stop: %s", e)
         finally:

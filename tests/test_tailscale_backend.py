@@ -78,9 +78,11 @@ MOCK_STATUS_NO_PEERS = {
 
 @pytest.fixture
 def backend():
-    """Create a TailscaleBackend with default port."""
+    """Create a TailscaleBackend with default port, no socket auto-detection."""
     from shell_cluster.tunnel.tailscale import TailscaleBackend
-    return TailscaleBackend(port=9876)
+    b = TailscaleBackend(port=9876)
+    b._socket = ""  # disable auto-detection for tests
+    return b
 
 
 def _patch_run_tailscale(backend, mock_status):

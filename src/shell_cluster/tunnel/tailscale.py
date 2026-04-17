@@ -5,11 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 
 from shell_cluster.models import TunnelInfo
 
 log = logging.getLogger(__name__)
+
+
+def _default_socket() -> str:
+    """Return the tailscale socket path in shell-cluster's config directory."""
+    if sys.platform == "win32":
+        return ""
+    from shell_cluster.config import CONFIG_DIR
+    return str(CONFIG_DIR / "tailscaled.sock")
 
 
 def _parse_hostname(hostname: str, default_port: int) -> tuple[str, int]:
@@ -38,11 +47,18 @@ class TailscaleBackend:
 
     def __init__(self, port: int = 9876):
         self._port = port
+        self._socket = _default_socket()
         self._hostname_to_ip: dict[str, str] = {}
+
+    def _socket_args(self) -> list[str]:
+        """Return --socket args if a custom socket path is configured."""
+        if self._socket:
+            return ["--socket", self._socket]
+        return []
 
     async def _run_tailscale(self, *args: str, check: bool = True) -> str:
         """Run a tailscale CLI command and return stdout."""
-        cmd = ["tailscale", *args]
+        cmd = ["tailscale", *self._socket_args(), *args]
         log.debug("Running: %s", " ".join(cmd))
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -180,10 +196,13 @@ class TailscaleBackend:
         log.info("Connecting to peer %s (%s:%d) via tailscale proxy",
                  tunnel_id, peer_ip, remote_port)
 
+        nc_cmd = ["tailscale", *self._socket_args(), "nc"]
+
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "shell_cluster.tunnel.tailscale_proxy",
             "--peer-ip", peer_ip,
             "--peer-port", str(remote_port),
+            "--tailscale-cmd", *nc_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

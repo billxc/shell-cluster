@@ -1,6 +1,6 @@
 {
   "name": "shell-cluster",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Decentralized remote shell access via tunnels — Node.js server with node-pty and xterm-headless",
   "main": "src/index.js",
   "bin": {
@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "start": "node src/index.js",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
+    "postinstall": "node -e \"const fs=require('fs'),p='node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper';try{fs.chmodSync(p,0o755)}catch(e){}\""
   },
   "keywords": [
     "shell",

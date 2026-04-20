@@ -39,11 +39,13 @@ Requires Node.js 18+.
 npm install -g shell-cluster
 ```
 
-### Try without installing
+### Try without installing (macOS/Linux only)
 
 ```bash
 npx shell-cluster start --no-tunnel --port 9876
 ```
+
+> **Note:** `npx` does not work on Windows due to `node-pty` native addon file locking. Use `npm install -g` instead.
 
 ### Install as a background service (recommended)
 

@@ -189,7 +189,25 @@ class ShellManager {
     const session = this._sessions.get(sessionId);
     if (!session) return '';
     try {
-      return session.serializer.serialize();
+      let state = session.serializer.serialize();
+
+      // SerializeAddon only saves screen content, not terminal modes.
+      // Restore modes that TUI apps (lazygit, vim, htop) rely on.
+      const modes = session.terminal.modes;
+      if (modes) {
+        const mouseMap = { x10: 9, vt200: 1000, drag: 1002, any: 1003 };
+        if (modes.mouseTrackingMode && modes.mouseTrackingMode !== 'none') {
+          state += `\x1b[?${mouseMap[modes.mouseTrackingMode]}h`;
+          // SGR extended mouse format (1006) — almost all modern TUI apps use this
+          state += '\x1b[?1006h';
+        }
+        if (modes.applicationCursorKeysMode) state += '\x1b[?1h';
+        if (modes.applicationKeypadMode) state += '\x1b=';
+        if (modes.bracketedPasteMode) state += '\x1b[?2004h';
+        if (modes.sendFocusMode) state += '\x1b[?1004h';
+      }
+
+      return state;
     } catch (e) {
       console.warn(`[ShellManager] Serialize failed for ${sessionId}:`, e.message);
       return '';

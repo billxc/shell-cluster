@@ -169,10 +169,12 @@ class DashboardServer {
       try {
         init = JSON.parse(data.toString('utf-8'));
       } catch (e) {
+        console.warn(`[DashboardServer] Proxy: invalid init JSON: ${data.toString('utf-8').slice(0, 200)}`);
         browserWs.close(1008, 'Invalid init message');
         return;
       }
 
+      console.log(`[DashboardServer] Proxy init: target=${init.target} path=${init.path}`);
       const targetUri = init.target;
       if (!targetUri) {
         browserWs.close(1008, 'Missing target URI');
@@ -206,7 +208,8 @@ class DashboardServer {
         }
       });
 
-      peerWs.on('close', () => {
+      peerWs.on('close', (code, reason) => {
+        console.log(`[DashboardServer] Peer WS closed code=${code} reason="${reason || ''}"`);
         browserWs.close();
       });
 
@@ -221,7 +224,8 @@ class DashboardServer {
       });
     });
 
-    browserWs.on('close', () => {
+    browserWs.on('close', (code, reason) => {
+      console.log(`[DashboardServer] Browser WS closed code=${code} reason="${reason || ''}"`);
       if (peerWs && peerWs.readyState === WebSocket.OPEN) {
         peerWs.close();
       }

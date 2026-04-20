@@ -6,7 +6,7 @@ const collapsedPeers = new Set();   // peer names that are collapsed
 let activeTab = null;
 let tabCounter = 0;
 let loadingSessions = false;
-let daemonWsUrl = 'ws://127.0.0.1:9000'; // TODO: make configurable from frontend
+let daemonWsUrl = `ws://${location.host}`;
 
 // Convert ws(s):// URL to http(s)://
 function wsToHttp(wsUrl) {
@@ -452,15 +452,19 @@ function createSession(peer, existingSessionId) {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    console.warn(`[WS] closed session=${sessionId} code=${ev.code} reason="${ev.reason}"`);
     if (!attached) {
-      term.writeln('\r\n\x1b[2m[Disconnected]\x1b[0m');
+      term.writeln(`\r\n\x1b[2m[Disconnected: code=${ev.code}${ev.reason ? ' ' + ev.reason : ''}]\x1b[0m`);
+    } else {
+      term.writeln(`\r\n\x1b[2m[Disconnected: code=${ev.code}${ev.reason ? ' ' + ev.reason : ''}]\x1b[0m`);
     }
     sessionState._disconnected = true;
     renderPeers();
   };
 
-  ws.onerror = () => {
+  ws.onerror = (ev) => {
+    console.error(`[WS] error session=${sessionId}`, ev);
     term.writeln('\r\n\x1b[31m[Connection error]\x1b[0m');
   };
 

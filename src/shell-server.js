@@ -119,31 +119,61 @@ class ShellServer {
     const isAttach = !!attachId;
     console.log(`[ShellServer] Raw client: ${isAttach ? 'attach' : 'create'} session=${sessionId} ${cols}x${rows}`);
 
+    // --- Batched output: accumulate PTY data, flush every 16ms (~60fps) ---
+    let outputBuf = [];
+    let flushTimer = null;
+
+    const flushOutput = () => {
+      flushTimer = null;
+      if (outputBuf.length === 0) return;
+      if (ws.readyState !== ws.OPEN) {
+        outputBuf = [];
+        return;
+      }
+
+      const combined = Buffer.concat(outputBuf);
+      outputBuf = [];
+
+      let str = combined.toString('utf-8');
+      str = stripTerminalQueries(str);
+      if (!str) return;
+
+      try {
+        ws.send(Buffer.from(str, 'utf-8'), (err) => {
+          if (err) {
+            console.warn(`[ShellServer] ws.send error session=${sessionId}: ${err.message}`);
+            return;
+          }
+          // Backpressure: pause PTY if WS buffer > 1MB
+          if (ws.bufferedAmount > 1024 * 1024) {
+            console.log(`[ShellServer] Backpressure ON session=${sessionId} buffered=${ws.bufferedAmount}`);
+            this._shellManager.pausePty(sessionId);
+            const check = () => {
+              if (ws.readyState !== ws.OPEN) {
+                // WS gone — resume PTY so it doesn't stay paused forever
+                this._shellManager.resumePty(sessionId);
+                return;
+              }
+              if (ws.bufferedAmount < 256 * 1024) {
+                console.log(`[ShellServer] Backpressure OFF session=${sessionId}`);
+                this._shellManager.resumePty(sessionId);
+              } else {
+                setTimeout(check, 50);
+              }
+            };
+            setTimeout(check, 50);
+          }
+        });
+      } catch (e) {
+        console.warn(`[ShellServer] ws.send threw session=${sessionId}: ${e.message}`);
+      }
+    };
+
     const onOutput = (sid, data) => {
       if (ws.readyState !== ws.OPEN) return;
-      let str = data.toString('utf-8');
-      str = stripTerminalQueries(str);
-      if (str) {
-        try {
-          ws.send(Buffer.from(str, 'utf-8'), (err) => {
-            if (err) return;
-            // Backpressure: pause PTY if WS buffer > 1MB
-            if (ws.bufferedAmount > 1024 * 1024) {
-              this._shellManager.pausePty(sessionId);
-              const check = () => {
-                if (ws.readyState !== ws.OPEN) return;
-                if (ws.bufferedAmount < 256 * 1024) {
-                  this._shellManager.resumePty(sessionId);
-                } else {
-                  setTimeout(check, 50);
-                }
-              };
-              setTimeout(check, 50);
-            }
-          });
-        } catch (e) {
-          // connection closed
-        }
+      outputBuf.push(data);
+      if (!flushTimer) {
+        flushTimer = setTimeout(flushOutput, 67);
       }
     };
 
@@ -192,7 +222,8 @@ class ShellServer {
         }));
       }
     } catch (e) {
-      console.error(`[ShellServer] Session setup failed:`, e.message);
+      console.log(`[ShellServer] ERROR: Session setup failed for session=${sessionId}: ${e.message}`);
+      if (e.stack) console.log(e.stack);
       try {
         ws.send(JSON.stringify({ type: 'error', error: e.message }));
       } catch (_) {}
@@ -235,13 +266,20 @@ class ShellServer {
       }
     });
 
-    ws.on('close', () => {
-      console.log(`[ShellServer] Raw client disconnected: session=${sessionId}`);
+    ws.on('close', (code, reason) => {
+      const reasonStr = reason ? reason.toString() : '';
+      console.log(`[ShellServer] WS closed session=${sessionId} code=${code} reason="${reasonStr}"`);
+      // Clean up flush timer
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      outputBuf = [];
       this._shellManager.detach(sessionId, onOutput, onExit);
+      // Ensure PTY is resumed in case backpressure left it paused
+      this._shellManager.resumePty(sessionId);
     });
 
     ws.on('error', (err) => {
-      console.warn(`[ShellServer] WebSocket error for session=${sessionId}:`, err.message);
+      console.error(`[ShellServer] WS error session=${sessionId}: ${err.message}`);
+      if (err.code) console.error(`[ShellServer]   code=${err.code}`);
     });
   }
 

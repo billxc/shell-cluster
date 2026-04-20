@@ -9,10 +9,15 @@ const ptyDir = path.join(__dirname, '..', 'node_modules', 'node-pty');
 if (!fs.existsSync(ptyDir)) process.exit(0);
 
 // Fix spawn-helper permissions on macOS/Linux
-try {
-  const helper = path.join(ptyDir, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper');
-  if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755);
-} catch (e) {}
+const helperPaths = [
+  path.join(ptyDir, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+  path.join(ptyDir, 'build', 'Release', 'spawn-helper'),
+];
+for (const helper of helperPaths) {
+  try {
+    if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755);
+  } catch (e) {}
+}
 
 // Test if node-pty loads
 try {

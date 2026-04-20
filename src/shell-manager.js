@@ -10,6 +10,7 @@
 'use strict';
 
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
@@ -20,6 +21,28 @@ let pty = null;
 let ptyLoadError = null;
 try {
   pty = require('node-pty');
+  // Fix spawn-helper permissions at runtime (npx installs may lose +x)
+  if (process.platform !== 'win32') {
+    try {
+      const ptyDir = path.dirname(require.resolve('node-pty'));
+      const helperCandidates = [
+        path.join(ptyDir, '..', 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+        path.join(ptyDir, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+      ];
+      for (const h of helperCandidates) {
+        if (fs.existsSync(h)) {
+          const stat = fs.statSync(h);
+          if (!(stat.mode & 0o111)) {
+            fs.chmodSync(h, 0o755);
+            console.log(`[ShellManager] Fixed spawn-helper permissions: ${h}`);
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      // best-effort
+    }
+  }
 } catch (e) {
   ptyLoadError = e.message;
 }
@@ -68,13 +91,25 @@ class ShellManager {
     if (!env.LANG) env.LANG = 'en_US.UTF-8';
     if (!env.LC_CTYPE) env.LC_CTYPE = 'en_US.UTF-8';
 
-    const ptyProcess = pty.spawn(shellCmd, [], {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: os.homedir(),
-      env,
-    });
+    let ptyProcess;
+    try {
+      ptyProcess = pty.spawn(shellCmd, [], {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: os.homedir(),
+        env,
+      });
+    } catch (e) {
+      const fs = require('fs');
+      const shellExists = fs.existsSync(shellCmd);
+      const homeExists = fs.existsSync(os.homedir());
+      console.log(`[ShellManager] ERROR: Failed to spawn shell '${shellCmd}'`);
+      console.log(`[ShellManager]   shell exists: ${shellExists}, cwd exists: ${homeExists}, cols=${cols}, rows=${rows}`);
+      console.log(`[ShellManager]   node-pty error: ${e.message}`);
+      if (e.stack) console.log(e.stack);
+      throw new Error(`Failed to spawn '${shellCmd}': ${e.message} (shell exists=${shellExists})`);
+    }
 
     // Create headless terminal for state tracking
     const terminal = new Terminal({ cols, rows, allowProposedApi: true });

@@ -1,20 +1,17 @@
 /**
- * Dashboard HTTP + WebSocket proxy server.
+ * Dashboard API + WebSocket proxy server.
  *
  * Runs on port 9000 (configurable). Provides:
  *   - GET  /api/peers         — peer list JSON
- *   - GET  /api/refresh-peers — trigger discovery refresh
+ *   - POST /api/refresh-peers — trigger discovery refresh
  *   - WS   /                  — proxy browser WS to peer shell servers
- *   - Static files from dashboard_v2/static/ at /
  */
 
 'use strict';
 
 const http = require('http');
 const url = require('url');
-const path = require('path');
 const { WebSocket, WebSocketServer } = require('ws');
-const { serveStaticFile } = require('./serve-static');
 
 class DashboardServer {
   /**
@@ -23,14 +20,12 @@ class DashboardServer {
    * @param {number} [opts.port=9000]
    * @param {function():Array} [opts.getPeers]
    * @param {function():Promise} [opts.refreshPeers]
-   * @param {string} [opts.staticDir] - path to dashboard_v2/static/
    */
   constructor(opts = {}) {
     this._host = opts.host || '127.0.0.1';
     this._port = opts.port || 9000;
     this._getPeers = opts.getPeers || (() => []);
     this._refreshPeers = opts.refreshPeers || null;
-    this._staticDir = opts.staticDir || path.resolve(__dirname, '../public');
     this._httpServer = null;
     this._wss = null;
   }
@@ -84,9 +79,8 @@ class DashboardServer {
     // API: peer list
     if (pathname === '/api/peers') {
       this._addCors(req, res);
-      const peers = this._getPeers();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(peers));
+      res.end(JSON.stringify(this._getPeers()));
       return;
     }
 
@@ -109,8 +103,8 @@ class DashboardServer {
       return;
     }
 
-    // Static files
-    serveStaticFile(req, res, pathname, this._staticDir);
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
   }
 
   /**
@@ -120,7 +114,6 @@ class DashboardServer {
     let peerWs = null;
     let initReceived = false;
 
-    // Wait for init message with target
     const initTimeout = setTimeout(() => {
       if (!initReceived) {
         browserWs.close(1008, 'Init timeout');
@@ -145,7 +138,6 @@ class DashboardServer {
         return;
       }
 
-      // Validate target against known peers
       const validUris = new Set(this._getPeers().map(p => p.uri));
       if (!validUris.has(targetUri)) {
         browserWs.close(1008, 'Unknown target');
@@ -160,7 +152,6 @@ class DashboardServer {
       peerWs = new WebSocket(connectUri);
 
       peerWs.on('open', () => {
-        // Forward any buffered messages from browser after init
         browserWs.on('message', (msg, isBinary) => {
           if (peerWs.readyState === WebSocket.OPEN) {
             peerWs.send(msg, { binary: isBinary });
@@ -179,7 +170,7 @@ class DashboardServer {
       });
 
       peerWs.on('error', (err) => {
-        console.error(`[DashboardServer] Proxy connection failed:`, err.message);
+        console.error(`[DashboardServer] Proxy error:`, err.message);
         try {
           browserWs.send(JSON.stringify({ type: 'error', error: 'Connection to peer failed' }));
         } catch (e) {

@@ -25,12 +25,8 @@ program
   .option('--no-tunnel', 'Local mode: no tunnel, direct WebSocket')
   .option('--name <name>', 'Override node name')
   .option('--port <port>', 'Shell server port (required for --no-tunnel)', parseInt)
-  .option('--no-open', "Don't auto-open browser")
-  .option('--no-dashboard', "Don't start dashboard server")
   .action(async (opts) => {
     const noTunnel = opts.tunnel === false;
-    const noDashboard = opts.dashboard === false;
-    const noOpen = opts.open === false;
 
     if (noTunnel && !opts.port) {
       console.error('--port is required in local mode (--no-tunnel).');
@@ -61,8 +57,6 @@ program
     const daemon = new Daemon(config, {
       noTunnel,
       localPort: opts.port,
-      noOpen,
-      noDashboard: noDashboard || !config.node.dashboard,
     });
 
     try {

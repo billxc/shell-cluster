@@ -9,7 +9,6 @@ const http = require('http');
 const { ShellManager } = require('./shell-manager');
 const { ShellServer } = require('./shell-server');
 const { DashboardServer } = require('./dashboard-server');
-const { StaticServer } = require('./static-server');
 const { makeTunnelId, getTunnelBackend } = require('./tunnel/base');
 const { PeerDiscovery } = require('./tunnel/discovery');
 const { getShellCommand } = require('./config');
@@ -39,14 +38,10 @@ class Daemon {
    * @param {object} opts
    * @param {boolean} [opts.noTunnel=false]
    * @param {number} [opts.localPort]
-   * @param {boolean} [opts.noOpen=false]
-   * @param {boolean} [opts.noDashboard=false]
    */
   constructor(config, opts = {}) {
     this._config = config;
     this._noTunnel = opts.noTunnel || false;
-    this._noOpen = opts.noOpen || false;
-    this._noDashboard = opts.noDashboard || false;
 
     this._tunnelBackend = null;
     this._shellManager = new ShellManager(getShellCommand(config));
@@ -66,7 +61,6 @@ class Daemon {
     this._discovery = null;
     this._discoveryRunning = false;
     this._dashboardServer = null;
-    this._staticServer = null;
 
     // Peer connection tracking
     this._tunnelConnectProcs = new Map(); // name -> childProcess
@@ -187,7 +181,7 @@ class Daemon {
       this._startHealthCheckLoop();
     }
 
-    // Dashboard server (port 9000)
+    // Dashboard server (port 9000) — API + WS proxy only
     this._dashboardServer = new DashboardServer({
       host: '127.0.0.1',
       port: this._config.node.dashboard_port,
@@ -195,15 +189,6 @@ class Daemon {
       refreshPeers: () => this._refreshPeers(),
     });
     await this._dashboardServer.start();
-
-    // Static server (port 9001)
-    if (!this._noDashboard) {
-      this._staticServer = new StaticServer({
-        host: '127.0.0.1',
-        port: this._config.node.dashboard_v2_port,
-      });
-      await this._staticServer.start();
-    }
 
     const mode = this._noTunnel ? 'local' : `tunnel=${this._tunnelId}`;
     console.log(`[Daemon] Running: node=${this._config.node.name}, ${mode}, shell=${this._shellServer.port}, dashboard=${this._config.node.dashboard_port}`);
@@ -358,9 +343,6 @@ class Daemon {
       Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 
     // Stop servers
-    if (this._staticServer) {
-      try { await withTimeout(this._staticServer.stop(), 2000); } catch (e) { /* ignore */ }
-    }
     if (this._dashboardServer) {
       try { await withTimeout(this._dashboardServer.stop(), 2000); } catch (e) { /* ignore */ }
     }

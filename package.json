@@ -1,6 +1,6 @@
 {
   "name": "shell-cluster",
-  "version": "1.0.11",
+  "version": "1.0.13",
   "description": "Decentralized remote shell access via tunnels — Node.js server with node-pty and xterm-headless",
   "main": "src/index.js",
   "bin": {
@@ -13,6 +13,9 @@
   ],
   "scripts": {
     "start": "node src/index.js",
+    "test": "jest --forceExit --detectOpenHandles",
+    "test:unit": "jest --testPathPattern='tests/unit' --forceExit",
+    "test:e2e": "jest --testPathPattern='tests/e2e' --forceExit --detectOpenHandles",
     "postinstall": "node scripts/postinstall.js"
   },
   "keywords": [
@@ -34,11 +37,14 @@
     "node": ">=18"
   },
   "dependencies": {
-    "node-pty": "^1.0.0",
-    "@xterm/headless": "^5.5.0",
-    "@xterm/addon-serialize": "^0.13.0",
-    "ws": "^8.18.0",
     "@iarna/toml": "^2.2.5",
-    "commander": "^12.0.0"
+    "@xterm/addon-serialize": "^0.13.0",
+    "@xterm/headless": "^5.5.0",
+    "commander": "^12.0.0",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
   }
 }

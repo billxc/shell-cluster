@@ -134,6 +134,18 @@ class Daemon {
   async start() {
     console.log(`[Daemon] Starting for node '${this._config.node.name}'`);
 
+    // Global error handlers for diagnostics
+    process.on('uncaughtException', (err) => {
+      console.error(`[Daemon] UNCAUGHT EXCEPTION: ${err.message}`);
+      console.error(err.stack);
+    });
+    process.on('unhandledRejection', (reason) => {
+      console.error(`[Daemon] UNHANDLED REJECTION:`, reason);
+    });
+    process.on('exit', (code) => {
+      console.error(`[Daemon] Process exiting with code=${code}`);
+    });
+
     // Verify node-pty before anything else
     if (this._shellManager.ptyError) {
       console.error(`[Daemon] node-pty failed to load: ${this._shellManager.ptyError}`);

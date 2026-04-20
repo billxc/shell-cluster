@@ -136,7 +136,12 @@ class ShellManager {
     // Wire PTY output -> headless terminal + track modes + notify listeners
     ptyProcess.onData((data) => {
       if (session._disposed) return;
-      terminal.write(data);
+      try {
+        terminal.write(data);
+      } catch (e) {
+        console.error(`[ShellManager] terminal.write threw session=${sessionId}: ${e.message}`);
+        return;
+      }
       // Track DEC private mode changes
       let m;
       while ((m = DEC_MODE_RE.exec(data)) !== null) {
@@ -150,7 +155,11 @@ class ShellManager {
       DEC_MODE_RE.lastIndex = 0;
       const buf = Buffer.from(data, 'utf-8');
       for (const cb of session._outputs) {
-        cb(sessionId, buf);
+        try {
+          cb(sessionId, buf);
+        } catch (e) {
+          console.error(`[ShellManager] output callback threw session=${sessionId}: ${e.message}`);
+        }
       }
     });
 

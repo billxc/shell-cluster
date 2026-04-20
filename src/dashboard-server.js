@@ -38,7 +38,7 @@ class DashboardServer {
    */
   constructor(opts = {}) {
     this._host = opts.host || '127.0.0.1';
-    this._port = opts.port || 9000;
+    this._port = opts.port !== undefined ? opts.port : 9000;
     this._getPeers = opts.getPeers || (() => []);
     this._refreshPeers = opts.refreshPeers || null;
     this._httpServer = null;

@@ -70,6 +70,14 @@ class ShellServer {
       });
 
       httpServer.on('error', reject);
+
+      httpServer.on('clientError', (err, socket) => {
+        console.error(`[ShellServer] Client error: ${err.message}`);
+      });
+
+      wss.on('error', (err) => {
+        console.error(`[ShellServer] WSS error: ${err.message}`);
+      });
     });
   }
 
@@ -232,11 +240,46 @@ class ShellServer {
       return;
     }
 
+    // --- Batched PTY input: reduce write frequency to ConPTY ---
+    // Also dedup mouse move events — only keep the latest position per batch.
+    // SGR mouse move: \x1b[<35;X;YM  (button=35 means motion, no button pressed)
+    // SGR mouse drag: \x1b[<32;X;YM  \x1b[<33;X;YM  \x1b[<34;X;YM
+    const MOUSE_MOVE_RE = /^\x1b\[<(3[2-5]);(\d+);(\d+)M$/;
+    let inputBuf = [];
+    let lastMouseMove = null; // deduplicated: only keep latest mouse move
+    let inputTimer = null;
+
+    const flushInput = () => {
+      inputTimer = null;
+      const parts = inputBuf;
+      const tail = lastMouseMove;
+      inputBuf = [];
+      lastMouseMove = null;
+      if (parts.length === 0 && !tail) return;
+      if (tail) parts.push(tail);
+      const combined = Buffer.concat(parts);
+      this._shellManager.write(sessionId, combined);
+    };
+
     // Handle incoming messages
     ws.on('message', (data, isBinary) => {
       if (isBinary) {
-        // Binary frame = PTY input
-        this._shellManager.write(sessionId, data);
+        // Binary frame = PTY input — batch + dedup mouse moves
+        const str = data.toString('utf-8');
+        if (MOUSE_MOVE_RE.test(str)) {
+          // Mouse move/drag: replace previous, don't accumulate
+          lastMouseMove = data;
+        } else {
+          // Non-mouse data: flush any pending mouse move first, then queue
+          if (lastMouseMove) {
+            inputBuf.push(lastMouseMove);
+            lastMouseMove = null;
+          }
+          inputBuf.push(data);
+        }
+        if (!inputTimer) {
+          inputTimer = setTimeout(flushInput, 8);
+        }
       } else {
         // Text frame — try JSON control
         const text = data.toString('utf-8');
@@ -269,9 +312,11 @@ class ShellServer {
     ws.on('close', (code, reason) => {
       const reasonStr = reason ? reason.toString() : '';
       console.log(`[ShellServer] WS closed session=${sessionId} code=${code} reason="${reasonStr}"`);
-      // Clean up flush timer
+      // Clean up timers
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      if (inputTimer) { clearTimeout(inputTimer); inputTimer = null; }
       outputBuf = [];
+      inputBuf = [];
       this._shellManager.detach(sessionId, onOutput, onExit);
       // Ensure PTY is resumed in case backpressure left it paused
       this._shellManager.resumePty(sessionId);

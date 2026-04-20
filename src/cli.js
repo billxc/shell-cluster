@@ -11,10 +11,13 @@ const { Command } = require('commander');
 const os = require('os');
 const { loadConfig, saveConfig, CONFIG_FILE, CONFIG_DIR } = require('./config');
 
+const pkg = require('../package.json');
+
 const program = new Command();
 
 program
   .name('shellcluster')
+  .version(pkg.version)
   .description('Shell Cluster - Remote access to all your shells via tunnels.')
   .option('-v, --verbose', 'Enable debug logging');
 

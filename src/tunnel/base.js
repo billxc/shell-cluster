@@ -13,7 +13,7 @@ const TUNNEL_SUFFIX = '-shellcluster';
  * @returns {string}
  */
 function makeTunnelId(nodeName) {
-  return `${TUNNEL_PREFIX}${nodeName}${TUNNEL_SUFFIX}`;
+  return `${TUNNEL_PREFIX}${nodeName.toLowerCase()}${TUNNEL_SUFFIX}`;
 }
 
 /**

@@ -121,12 +121,26 @@ class ShellServer {
 
     const onOutput = (sid, data) => {
       if (ws.readyState !== ws.OPEN) return;
-      // data is a Buffer; convert to string for query stripping, then back
       let str = data.toString('utf-8');
       str = stripTerminalQueries(str);
       if (str) {
         try {
-          ws.send(Buffer.from(str, 'utf-8'));
+          ws.send(Buffer.from(str, 'utf-8'), (err) => {
+            if (err) return;
+            // Backpressure: pause PTY if WS buffer > 1MB
+            if (ws.bufferedAmount > 1024 * 1024) {
+              this._shellManager.pausePty(sessionId);
+              const check = () => {
+                if (ws.readyState !== ws.OPEN) return;
+                if (ws.bufferedAmount < 256 * 1024) {
+                  this._shellManager.resumePty(sessionId);
+                } else {
+                  setTimeout(check, 50);
+                }
+              };
+              setTimeout(check, 50);
+            }
+          });
         } catch (e) {
           // connection closed
         }

@@ -92,13 +92,27 @@ class ShellManager {
       _outputs: new Set(onOutput ? [onOutput] : []),
       _exits: new Set(onExit ? [onExit] : []),
       _disposed: false,
+      _decModes: new Set(), // track active DEC private modes (e.g. 1003, 1006, 2004)
     };
 
-    // Wire PTY output -> headless terminal + all listeners
+    // Regex to match DEC private mode set/reset: ESC[?<n1>;<n2>;...h or ESC[?<n1>;<n2>;...l
+    const DEC_MODE_RE = /\x1b\[\?([0-9;]+)([hl])/g;
+
+    // Wire PTY output -> headless terminal + track modes + notify listeners
     ptyProcess.onData((data) => {
       if (session._disposed) return;
-      // data is a string from node-pty
       terminal.write(data);
+      // Track DEC private mode changes
+      let m;
+      while ((m = DEC_MODE_RE.exec(data)) !== null) {
+        const modes = m[1].split(';');
+        const enable = m[2] === 'h';
+        for (const mode of modes) {
+          if (enable) session._decModes.add(mode);
+          else session._decModes.delete(mode);
+        }
+      }
+      DEC_MODE_RE.lastIndex = 0;
       const buf = Buffer.from(data, 'utf-8');
       for (const cb of session._outputs) {
         cb(sessionId, buf);
@@ -142,6 +156,16 @@ class ShellManager {
       console.warn(`[ShellManager] Write failed for ${sessionId}:`, e.message);
       return false;
     }
+  }
+
+  pausePty(sessionId) {
+    const session = this._sessions.get(sessionId);
+    if (session && !session._disposed) session.pty.pause();
+  }
+
+  resumePty(sessionId) {
+    const session = this._sessions.get(sessionId);
+    if (session && !session._disposed) session.pty.resume();
   }
 
   /**
@@ -191,20 +215,9 @@ class ShellManager {
     try {
       let state = session.serializer.serialize();
 
-      // SerializeAddon only saves screen content, not terminal modes.
-      // Restore modes that TUI apps (lazygit, vim, htop) rely on.
-      const modes = session.terminal.modes;
-      if (modes) {
-        const mouseMap = { x10: 9, vt200: 1000, drag: 1002, any: 1003 };
-        if (modes.mouseTrackingMode && modes.mouseTrackingMode !== 'none') {
-          state += `\x1b[?${mouseMap[modes.mouseTrackingMode]}h`;
-          // SGR extended mouse format (1006) — almost all modern TUI apps use this
-          state += '\x1b[?1006h';
-        }
-        if (modes.applicationCursorKeysMode) state += '\x1b[?1h';
-        if (modes.applicationKeypadMode) state += '\x1b=';
-        if (modes.bracketedPasteMode) state += '\x1b[?2004h';
-        if (modes.sendFocusMode) state += '\x1b[?1004h';
+      // Restore DEC private modes tracked from PTY output
+      if (session._decModes.size > 0) {
+        state += `\x1b[?${[...session._decModes].join(';')}h`;
       }
 
       return state;

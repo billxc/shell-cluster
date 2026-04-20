@@ -1,6 +1,6 @@
 {
   "name": "shell-cluster",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Decentralized remote shell access via tunnels — Node.js server with node-pty and xterm-headless",
   "main": "src/index.js",
   "bin": {

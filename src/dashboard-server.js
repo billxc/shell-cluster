@@ -99,6 +99,15 @@ class DashboardServer {
       return;
     }
 
+    // API: version
+    if (pathname === '/api/version') {
+      this._addCors(req, res);
+      const pkg = require('../package.json');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ version: pkg.version }));
+      return;
+    }
+
     // API: refresh peers
     if (pathname === '/api/refresh-peers') {
       this._addCors(req, res);

@@ -182,6 +182,7 @@ The daemon runs in the background and auto-starts on login.
 |---------|-------------|
 | `shellcluster start` | Start daemon (tunnel + shell server + discovery + dashboard API) |
 | `shellcluster start --no-tunnel --port 9876` | Start in local mode (no tunnel) |
+| `shellcluster start --dashboard-port 19000` | Use custom dashboard API port |
 | `shellcluster register` | Register this machine to the cluster |
 | `shellcluster unregister` | Remove this machine from the cluster |
 | `shellcluster peers` | List discovered peers |

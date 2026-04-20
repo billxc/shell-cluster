@@ -38,10 +38,12 @@ class Daemon {
    * @param {object} opts
    * @param {boolean} [opts.noTunnel=false]
    * @param {number} [opts.localPort]
+   * @param {number} [opts.dashboardPort]
    */
   constructor(config, opts = {}) {
     this._config = config;
     this._noTunnel = opts.noTunnel || false;
+    if (opts.dashboardPort) this._config.node.dashboard_port = opts.dashboardPort;
 
     this._tunnelBackend = null;
     this._shellManager = new ShellManager(getShellCommand(config));

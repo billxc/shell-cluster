@@ -28,6 +28,7 @@ program
   .option('--no-tunnel', 'Local mode: no tunnel, direct WebSocket')
   .option('--name <name>', 'Override node name')
   .option('--port <port>', 'Shell server port (required for --no-tunnel)', parseInt)
+  .option('--dashboard-port <port>', 'Dashboard API port (default: from config or 9000)', parseInt)
   .action(async (opts) => {
     const noTunnel = opts.tunnel === false;
 
@@ -60,6 +61,7 @@ program
     const daemon = new Daemon(config, {
       noTunnel,
       localPort: opts.port,
+      dashboardPort: opts.dashboardPort,
     });
 
     try {

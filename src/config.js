@@ -121,8 +121,8 @@ function getShellCommand(config) {
     const { execFileSync } = require('child_process');
     for (const shell of ['pwsh', 'powershell.exe']) {
       try {
-        execFileSync('where', [shell], { stdio: 'pipe' });
-        return shell;
+        const fullPath = execFileSync('where', [shell], { stdio: 'pipe' }).toString().trim().split('\n')[0].trim();
+        if (fullPath) return fullPath;
       } catch (e) {}
     }
     return process.env.COMSPEC || 'cmd.exe';

@@ -2,6 +2,7 @@
  * Dashboard API + WebSocket proxy server.
  *
  * Runs on port 9000 (configurable). Provides:
+ *   - GET  /                  — dashboard UI (static files from public/)
  *   - GET  /api/peers         — peer list JSON
  *   - POST /api/refresh-peers — trigger discovery refresh
  *   - WS   /                  — proxy browser WS to peer shell servers
@@ -10,8 +11,22 @@
 'use strict';
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const url = require('url');
 const { WebSocket, WebSocketServer } = require('ws');
+
+const STATIC_DIR = path.resolve(__dirname, '../public');
+
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+};
 
 class DashboardServer {
   /**
@@ -103,8 +118,25 @@ class DashboardServer {
       return;
     }
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
+    // Static files from public/
+    let filePath = pathname === '/' ? '/index.html' : pathname;
+    const resolved = path.resolve(STATIC_DIR, filePath.slice(1));
+    if (!resolved.startsWith(STATIC_DIR)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+
+    try {
+      const stat = await fs.promises.stat(resolved);
+      if (!stat.isFile()) throw new Error('not a file');
+      const ext = path.extname(resolved);
+      res.writeHead(200, { 'Content-Type': CONTENT_TYPES[ext] || 'application/octet-stream' });
+      fs.createReadStream(resolved).pipe(res);
+    } catch (e) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+    }
   }
 
   /**

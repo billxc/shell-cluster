@@ -179,7 +179,11 @@ class ShellServer {
       }
     } catch (e) {
       console.error(`[ShellServer] Session setup failed:`, e.message);
-      ws.close(1008, e.message);
+      try {
+        ws.send(JSON.stringify({ type: 'error', error: e.message }));
+      } catch (_) {}
+      const reason = e.message.length > 123 ? e.message.slice(0, 120) + '...' : e.message;
+      ws.close(1008, reason);
       return;
     }
 

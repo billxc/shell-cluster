@@ -11,9 +11,18 @@
 
 const os = require('os');
 const path = require('path');
-const pty = require('node-pty');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
+
+// node-pty requires platform-specific native binaries.
+// Detect availability at load time so we can fail gracefully.
+let pty = null;
+let ptyLoadError = null;
+try {
+  pty = require('node-pty');
+} catch (e) {
+  ptyLoadError = e.message;
+}
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -41,7 +50,15 @@ class ShellManager {
    * @param {function(string):void} onExit - (sessionId)
    * @returns {object} session
    */
+  /** @returns {string|null} Error message if PTY is unavailable, null if OK */
+  get ptyError() {
+    return ptyLoadError;
+  }
+
   create(sessionId, shell, cols, rows, onOutput, onExit) {
+    if (!pty) {
+      throw new Error(`PTY not available: ${ptyLoadError}`);
+    }
     const shellCmd = shell || this._defaultShell;
     const shellName = path.basename(shellCmd);
 

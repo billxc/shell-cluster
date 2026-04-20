@@ -132,6 +132,13 @@ class Daemon {
   async start() {
     console.log(`[Daemon] Starting for node '${this._config.node.name}'`);
 
+    // Verify node-pty before anything else
+    if (this._shellManager.ptyError) {
+      console.error(`[Daemon] node-pty failed to load: ${this._shellManager.ptyError}`);
+      console.error('  Fix: npm rebuild node-pty');
+      process.exit(1);
+    }
+
     // Start shell server
     await this._shellServer.start();
 

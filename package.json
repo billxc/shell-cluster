@@ -8,11 +8,12 @@
   },
   "files": [
     "src/",
-    "public/"
+    "public/",
+    "scripts/"
   ],
   "scripts": {
     "start": "node src/index.js",
-    "postinstall": "node -e \"const fs=require('fs'),p='node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper';try{fs.chmodSync(p,0o755)}catch(e){}\""
+    "postinstall": "node scripts/postinstall.js"
   },
   "keywords": [
     "shell",

@@ -89,26 +89,27 @@ class ShellManager {
       pty: ptyProcess,
       terminal,
       serializer,
-      _onOutput: onOutput || null,
-      _onExit: onExit || null,
+      _outputs: new Set(onOutput ? [onOutput] : []),
+      _exits: new Set(onExit ? [onExit] : []),
       _disposed: false,
     };
 
-    // Wire PTY output -> headless terminal + callback
+    // Wire PTY output -> headless terminal + all listeners
     ptyProcess.onData((data) => {
       if (session._disposed) return;
       // data is a string from node-pty
       terminal.write(data);
-      if (session._onOutput) {
-        session._onOutput(sessionId, Buffer.from(data, 'utf-8'));
+      const buf = Buffer.from(data, 'utf-8');
+      for (const cb of session._outputs) {
+        cb(sessionId, buf);
       }
     });
 
     ptyProcess.onExit(() => {
       if (session._disposed) return;
       session._disposed = true;
-      if (session._onExit) {
-        session._onExit(sessionId);
+      for (const cb of session._exits) {
+        cb(sessionId);
       }
       // Clean up: remove from map and dispose terminal
       this._sessions.delete(sessionId);
@@ -158,16 +159,26 @@ class ShellManager {
   }
 
   /**
-   * Re-attach callbacks to an existing session (for reconnect).
+   * Attach a new listener to an existing session (supports multiple clients).
    * Returns the session if found, null otherwise.
    */
   attach(sessionId, onOutput, onExit) {
     const session = this._sessions.get(sessionId);
     if (!session || session._disposed) return null;
-    session._onOutput = onOutput;
-    session._onExit = onExit;
-    console.log(`[ShellManager] Re-attached to session ${sessionId}`);
+    if (onOutput) session._outputs.add(onOutput);
+    if (onExit) session._exits.add(onExit);
+    console.log(`[ShellManager] Attached to session ${sessionId} (${session._outputs.size} clients)`);
     return session;
+  }
+
+  /**
+   * Remove a listener from a session (when a client disconnects).
+   */
+  detach(sessionId, onOutput, onExit) {
+    const session = this._sessions.get(sessionId);
+    if (!session) return;
+    if (onOutput) session._outputs.delete(onOutput);
+    if (onExit) session._exits.delete(onExit);
   }
 
   /**

@@ -223,7 +223,7 @@ class ShellServer {
 
     ws.on('close', () => {
       console.log(`[ShellServer] Raw client disconnected: session=${sessionId}`);
-      // Session persists for reconnect — don't close it
+      this._shellManager.detach(sessionId, onOutput, onExit);
     });
 
     ws.on('error', (err) => {

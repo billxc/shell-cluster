@@ -26,3 +26,6 @@ Thumbs.db
 
 # Config (user-specific)
 *.local.toml
+
+# Node
+node_modules/

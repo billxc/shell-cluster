@@ -1,14 +1,35 @@
 {
   "name": "shell-cluster-server",
   "version": "1.0.0",
-  "description": "Node.js server for shell-cluster with node-pty and xterm-headless",
+  "description": "Decentralized remote shell access via tunnels — Node.js server with node-pty and xterm-headless",
   "main": "src/index.js",
   "bin": {
     "shellcluster": "src/cli.js"
   },
+  "files": [
+    "src/"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
+  },
+  "keywords": [
+    "shell",
+    "terminal",
+    "remote",
+    "pty",
+    "xterm",
+    "tunnel",
+    "devtunnel",
+    "tailscale"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/billxc/shell-cluster"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "node-pty": "^1.0.0",

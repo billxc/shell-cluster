@@ -117,6 +117,14 @@ function saveConfig(config) {
 function getShellCommand(config) {
   if (config.shell.command) return config.shell.command;
   if (process.platform === 'win32') {
+    // Prefer pwsh (PowerShell 7+) -> powershell.exe -> cmd.exe
+    const { execFileSync } = require('child_process');
+    for (const shell of ['pwsh', 'powershell.exe']) {
+      try {
+        execFileSync('where', [shell], { stdio: 'pipe' });
+        return shell;
+      } catch (e) {}
+    }
     return process.env.COMSPEC || 'cmd.exe';
   }
   return process.env.SHELL || '/bin/sh';

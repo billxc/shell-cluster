@@ -163,7 +163,7 @@ The daemon runs in the background and auto-starts on login.
 - **SerializeAddon** for perfect state replay on reconnect (replaces raw scrollback buffer)
 - **WebSocket** `/raw` endpoint: binary frames for PTY data, JSON text frames for control
 - **HTTP** `/sessions` endpoint: list active sessions
-- **Dashboard API** (port 9000): `/api/peers`, `/api/refresh-peers`, WebSocket proxy
+- **Dashboard API** (port 9000): `/api/peers`, `/api/version`, `/api/refresh-peers`, WebSocket proxy
 
 ## Why Decentralized?
 
@@ -197,7 +197,7 @@ The daemon runs in the background and auto-starts on login.
 |---|---|
 | macOS | `~/Library/Application Support/shell-cluster/config.toml` |
 | Linux | `~/.config/shell-cluster/config.toml` |
-| Windows | `%APPDATA%\shell-cluster\config.toml` |
+| Windows | `%LOCALAPPDATA%\shell-cluster\config.toml` |
 
 ```toml
 [node]
@@ -223,6 +223,14 @@ git clone git@github.com:billxc/shell-cluster.git
 cd shell-cluster
 npm install
 node src/cli.js start --no-tunnel --port 9876
+```
+
+### Running Tests
+
+```bash
+npm test            # all tests
+npm run test:unit   # unit tests only
+npm run test:e2e    # end-to-end tests only
 ```
 
 ## Service Management

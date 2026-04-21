@@ -499,4 +499,52 @@ describe('E2E: Shell Server', () => {
       });
     });
   });
+
+  // --- Regression tests ---
+
+  describe('regression: unknown JSON types not written to PTY', () => {
+    test('unknown JSON control type is ignored, not typed into shell', async () => {
+      const ws = await createWsClient(port, 'json-ignore-test');
+      try {
+        await waitForJsonType(ws, 'shell.created');
+        await drainOutput(ws);
+
+        // Send unknown JSON type — should be silently ignored
+        ws.send(JSON.stringify({ type: 'shell.ping' }));
+        await sleep(200);
+
+        // Now send a real command to check the shell is clean
+        const output = await sendCommand(ws, 'echo CLEAN');
+        const text = output.toString();
+        // The unknown JSON should NOT appear as typed text
+        expect(text).not.toContain('shell.ping');
+        expect(text).toContain('CLEAN');
+      } finally {
+        manager.close('json-ignore-test');
+        ws.close();
+        await sleep(100);
+      }
+    });
+  });
+
+  describe('regression: close() fires shell.closed via exit callback', () => {
+    test('manager.close() sends shell.closed to WS client', async () => {
+      const ws = await createWsClient(port, 'close-notify-test');
+      try {
+        await waitForJsonType(ws, 'shell.created');
+        await drainOutput(ws);
+
+        // Close from server side (simulates dashboard "kill session")
+        manager.close('close-notify-test');
+
+        // Client should receive shell.closed
+        const msg = await waitForJsonType(ws, 'shell.closed', 5000);
+        expect(msg.type).toBe('shell.closed');
+        expect(msg.session_id).toBe('close-notify-test');
+      } finally {
+        ws.close();
+        await sleep(100);
+      }
+    });
+  });
 });

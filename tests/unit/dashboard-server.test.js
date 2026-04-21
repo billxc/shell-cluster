@@ -110,6 +110,20 @@ describe('DashboardServer', () => {
       });
       expect(res.headers['access-control-allow-origin']).toBe('http://127.0.0.1:9000');
     });
+
+    test('rejects localhost.evil.com origin (regression: subdomain bypass)', async () => {
+      const res = await httpGet(`http://127.0.0.1:${port}/api/peers`, {
+        Origin: 'http://localhost.evil.com',
+      });
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
+
+    test('rejects arbitrary origin', async () => {
+      const res = await httpGet(`http://127.0.0.1:${port}/api/peers`, {
+        Origin: 'http://attacker.com',
+      });
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    });
   });
 
   describe('refresh-peers without handler', () => {

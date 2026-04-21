@@ -280,6 +280,11 @@ class ShellManager {
     if (!sess) return false;
     this._sessions.delete(sessionId);
 
+    // Fire exit callbacks BEFORE setting _disposed so onExit won't double-fire
+    for (const cb of [...sess._exits]) {
+      try { cb(sessionId); } catch (e) { /* ignore */ }
+    }
+
     sess._disposed = true;
     try {
       sess.pty.kill();

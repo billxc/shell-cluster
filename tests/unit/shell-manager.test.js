@@ -220,4 +220,42 @@ describe('ShellManager', () => {
       expect(() => manager.resumePty('nonexistent')).not.toThrow();
     });
   });
+
+  // --- Regression tests ---
+
+  describe('close() fires exit callbacks (regression)', () => {
+    test('onExit callback is called when close() is used', () => {
+      const onExit = jest.fn();
+      manager.create('exit-cb-1', '', 80, 24, null, onExit);
+
+      manager.close('exit-cb-1');
+
+      expect(onExit).toHaveBeenCalledWith('exit-cb-1');
+      expect(onExit).toHaveBeenCalledTimes(1);
+    });
+
+    test('multiple exit callbacks are all fired on close()', () => {
+      const onExit1 = jest.fn();
+      const onExit2 = jest.fn();
+      manager.create('exit-cb-2', '', 80, 24, null, onExit1);
+      manager.attach('exit-cb-2', null, onExit2);
+
+      manager.close('exit-cb-2');
+
+      expect(onExit1).toHaveBeenCalledWith('exit-cb-2');
+      expect(onExit2).toHaveBeenCalledWith('exit-cb-2');
+    });
+
+    test('closeAll fires exit callbacks for all sessions', () => {
+      const onExit1 = jest.fn();
+      const onExit2 = jest.fn();
+      manager.create('exit-all-1', '', 80, 24, null, onExit1);
+      manager.create('exit-all-2', '', 80, 24, null, onExit2);
+
+      manager.closeAll();
+
+      expect(onExit1).toHaveBeenCalledWith('exit-all-1');
+      expect(onExit2).toHaveBeenCalledWith('exit-all-2');
+    });
+  });
 });

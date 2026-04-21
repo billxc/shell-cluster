@@ -64,7 +64,14 @@ function loadConfig() {
   }
 
   const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-  const data = TOML.parse(raw);
+  let data;
+  try {
+    data = TOML.parse(raw);
+  } catch (e) {
+    console.error(`[Config] Failed to parse ${CONFIG_FILE}: ${e.message}`);
+    console.error('[Config] Using default configuration');
+    return defaultConfig();
+  }
   const config = defaultConfig();
 
   if (data.node) {

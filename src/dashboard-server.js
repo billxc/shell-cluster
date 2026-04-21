@@ -73,10 +73,17 @@ class DashboardServer {
 
   _addCors(req, res) {
     const origin = req.headers.origin || '';
-    if (origin && (origin.includes('://localhost') || origin.includes('://127.0.0.1'))) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (origin) {
+      try {
+        const parsed = new URL(origin);
+        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        }
+      } catch (e) {
+        // invalid origin URL — ignore
+      }
     }
   }
 
@@ -226,13 +233,13 @@ class DashboardServer {
 
     browserWs.on('close', (code, reason) => {
       console.log(`[DashboardServer] Browser WS closed code=${code} reason="${reason || ''}"`);
-      if (peerWs && peerWs.readyState === WebSocket.OPEN) {
+      if (peerWs && (peerWs.readyState === WebSocket.OPEN || peerWs.readyState === WebSocket.CONNECTING)) {
         peerWs.close();
       }
     });
 
     browserWs.on('error', () => {
-      if (peerWs && peerWs.readyState === WebSocket.OPEN) {
+      if (peerWs && (peerWs.readyState === WebSocket.OPEN || peerWs.readyState === WebSocket.CONNECTING)) {
         peerWs.close();
       }
     });

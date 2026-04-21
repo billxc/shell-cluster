@@ -186,6 +186,10 @@ class ShellServer {
     };
 
     const onExit = (sid) => {
+      // Flush any pending output before sending shell.closed
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      flushOutput();
+
       if (ws.readyState !== ws.OPEN) return;
       try {
         ws.send(JSON.stringify({ type: 'shell.closed', session_id: sid }));
@@ -299,8 +303,8 @@ class ShellServer {
               // ignore
             }
           } else {
-            // Unknown JSON — treat as PTY input
-            this._shellManager.write(sessionId, Buffer.from(text, 'utf-8'));
+            // Unknown JSON control type — ignore it (don't write to PTY)
+            console.warn(`[ShellServer] Unknown control type: ${ctrl.type} session=${sessionId}`);
           }
         } catch (e) {
           // Not JSON — plain text PTY input
